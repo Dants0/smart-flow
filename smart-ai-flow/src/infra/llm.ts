@@ -1,21 +1,13 @@
 import Anthropic from '@anthropic-ai/sdk';
 import type { CardImage } from '../domain/card';
+import { getSettings, type PlatformSettings } from './settingsRepository';
 
 /**
  * Camada única por onde ANALISE e DESENVOLVIMENTO falam com o LLM.
- * Suporta Anthropic (padrão) ou OpenAI via AI_PROVIDER — útil pra testar
- * sem chave da Anthropic válida. Igual ao resto do backend: token vive só
- * aqui, no server, nunca na máquina do dev.
+ * Suporta Anthropic (padrão) ou OpenAI, escolhido pela tela de Configurações
+ * (aiProvider) — lido a cada chamada, nunca cacheado, pra uma troca de chave
+ * ou provider valer na hora, sem restart.
  */
-const PROVIDER = (process.env.AI_PROVIDER ?? 'anthropic').toLowerCase();
-
-const ANTHROPIC_MODEL = process.env.MODEL ?? 'claude-sonnet-5';
-const OPENAI_MODEL = process.env.OPENAI_MODEL ?? 'gpt-4o';
-
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-
-export const MODEL = PROVIDER === 'openai' ? OPENAI_MODEL : ANTHROPIC_MODEL;
-
 export interface LlmRequest {
   system: string;
   userText: string;
@@ -24,10 +16,19 @@ export interface LlmRequest {
 }
 
 export async function callLlm(req: LlmRequest): Promise<string> {
-  return PROVIDER === 'openai' ? callOpenAI(req) : callAnthropic(req);
+  const settings = await getSettings();
+  return settings.aiProvider === 'openai' ? callOpenAI(req, settings) : callAnthropic(req, settings);
 }
 
-async function callAnthropic({ system, userText, images, maxTokens }: LlmRequest): Promise<string> {
+async function callAnthropic(
+  { system, userText, images, maxTokens }: LlmRequest,
+  settings: PlatformSettings,
+): Promise<string> {
+  if (!settings.anthropicApiKey) {
+    throw new Error('Chave da Anthropic não configurada — veja Configurações > IA.');
+  }
+  const anthropic = new Anthropic({ apiKey: settings.anthropicApiKey });
+
   const content: Anthropic.MessageParam['content'] = [
     ...(images ?? []).map(
       (img): Anthropic.ImageBlockParam => ({
@@ -43,7 +44,7 @@ async function callAnthropic({ system, userText, images, maxTokens }: LlmRequest
   ];
 
   const resp = await anthropic.messages.create({
-    model: ANTHROPIC_MODEL,
+    model: settings.model,
     max_tokens: maxTokens,
     system,
     messages: [{ role: 'user', content }],
@@ -55,10 +56,12 @@ async function callAnthropic({ system, userText, images, maxTokens }: LlmRequest
     .join('\n');
 }
 
-async function callOpenAI({ system, userText, images, maxTokens }: LlmRequest): Promise<string> {
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) {
-    throw new Error('OPENAI_API_KEY não configurado no .env do backend');
+async function callOpenAI(
+  { system, userText, images, maxTokens }: LlmRequest,
+  settings: PlatformSettings,
+): Promise<string> {
+  if (!settings.openaiApiKey) {
+    throw new Error('Chave da OpenAI não configurada — veja Configurações > IA.');
   }
 
   const content = [
@@ -72,11 +75,11 @@ async function callOpenAI({ system, userText, images, maxTokens }: LlmRequest): 
   const resp = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${apiKey}`,
+      Authorization: `Bearer ${settings.openaiApiKey}`,
       'content-type': 'application/json',
     },
     body: JSON.stringify({
-      model: OPENAI_MODEL,
+      model: settings.openaiModel,
       max_tokens: maxTokens,
       messages: [
         { role: 'system', content: system },

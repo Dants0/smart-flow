@@ -90,3 +90,40 @@ export async function deleteCard(id: string): Promise<void> {
     throw new Error(body.error ?? `Erro ${res.status} ao apagar card`);
   }
 }
+
+export interface PlatformSettingsView {
+  anthropicApiKeySet: boolean;
+  model: string;
+  aiProvider: string;
+  openaiApiKeySet: boolean;
+  openaiModel: string;
+  traceServiceUrl: string;
+  jiraBaseUrl: string | null;
+  jiraUser: string | null;
+  jiraPasswordSet: boolean;
+  jiraAssignedJql: string;
+  pbInsightUrl: string;
+  updatedAt: string;
+}
+
+export type PlatformSettingsPatch = Partial<{
+  anthropicApiKey: string;
+  model: string;
+  aiProvider: string;
+  openaiApiKey: string;
+  openaiModel: string;
+  traceServiceUrl: string;
+  jiraBaseUrl: string;
+  jiraUser: string;
+  jiraPassword: string;
+  jiraAssignedJql: string;
+  pbInsightUrl: string;
+}>;
+
+export function getSettings(): Promise<PlatformSettingsView> {
+  return request("/settings");
+}
+
+export function updateSettings(patch: PlatformSettingsPatch): Promise<PlatformSettingsView> {
+  return request("/settings", { method: "PATCH", body: JSON.stringify(patch) });
+}

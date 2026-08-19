@@ -1,3 +1,5 @@
+import { getSettings } from './settingsRepository';
+
 /**
  * Cliente do PB Insight — serviço próprio (pasta `pb-insight/`, projeto separado)
  * com o grafo real do SMART Desktop indexado (15k+ objetos: windows, datawindows,
@@ -9,7 +11,6 @@
  * documentada no próprio pb-insight (docs/04) como a que converge pro
  * mecanismo certo do fix, evidência real em vez de suposição.
  */
-const PB_INSIGHT_URL = process.env.PB_INSIGHT_URL ?? 'http://127.0.0.1:4500';
 const FETCH_TIMEOUT_MS = 5000;
 const MAX_HITS = 6;
 const SNIPPET_CHARS = 3000;
@@ -54,11 +55,11 @@ interface EventBodyResponse {
   }[];
 }
 
-async function pbInsightGet<T>(path: string): Promise<T> {
+async function pbInsightGet<T>(baseUrl: string, path: string): Promise<T> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   try {
-    const resp = await fetch(`${PB_INSIGHT_URL}${path}`, { signal: controller.signal });
+    const resp = await fetch(`${baseUrl}${path}`, { signal: controller.signal });
     if (!resp.ok) throw new Error(`pb-insight respondeu ${resp.status}`);
     return (await resp.json()) as T;
   } finally {
@@ -72,6 +73,7 @@ export async function retrieveContext(module: string, query: string): Promise<st
     return `// nenhum termo relevante extraído do texto pra buscar no PB Insight (módulo=${module}).`;
   }
 
+  const { pbInsightUrl } = await getSettings();
   const seen = new Set<string>();
   const blocks: string[] = [];
 
@@ -80,7 +82,7 @@ export async function retrieveContext(module: string, query: string): Promise<st
 
     let search: SearchResponse;
     try {
-      search = await pbInsightGet<SearchResponse>(`/search?q=${encodeURIComponent(kw)}&limit=5`);
+      search = await pbInsightGet<SearchResponse>(pbInsightUrl, `/search?q=${encodeURIComponent(kw)}&limit=5`);
     } catch {
       continue; // pb-insight fora do ar ou lento — perde só esse termo, não derruba a análise
     }
@@ -95,6 +97,7 @@ export async function retrieveContext(module: string, query: string): Promise<st
       if (match.kind === 'event' && match.event) {
         try {
           const eventResp = await pbInsightGet<EventBodyResponse>(
+            pbInsightUrl,
             `/objects/${encodeURIComponent(match.object.name)}/events/${encodeURIComponent(match.event.name)}?owner=${encodeURIComponent(match.event.owner)}`,
           );
           const body = eventResp.matches[0]?.event.body;
@@ -116,7 +119,7 @@ export async function retrieveContext(module: string, query: string): Promise<st
   }
 
   if (blocks.length === 0) {
-    return `// PB Insight não encontrou objetos pra: ${keywords.join(', ')} (módulo=${module}). Serviço em ${PB_INSIGHT_URL} está no ar?`;
+    return `// PB Insight não encontrou objetos pra: ${keywords.join(', ')} (módulo=${module}). Serviço em ${pbInsightUrl} está no ar?`;
   }
 
   return blocks.join('\n\n');

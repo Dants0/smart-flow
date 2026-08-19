@@ -53,6 +53,32 @@ model History {
   at     DateTime @default(now())
 }
 
+// Configuração da plataforma — linha única (id sempre 1), editável pela tela
+// de Configurações. Substitui o .env pra tudo que não é bootstrap: DATABASE_URL
+// e PORT continuam no .env porque o processo precisa deles antes de conseguir
+// falar com o banco.
+model PlatformSettings {
+  id Int @id @default(1)
+
+  anthropicApiKey String?
+  model           String  @default("claude-sonnet-5")
+
+  aiProvider   String  @default("anthropic") // 'anthropic' | 'openai'
+  openaiApiKey String?
+  openaiModel  String  @default("gpt-4o")
+
+  traceServiceUrl String @default("http://localhost:8070")
+
+  jiraBaseUrl     String?
+  jiraUser        String?
+  jiraPassword    String?
+  jiraAssignedJql String  @default("assignee = currentUser() AND resolution = Unresolved ORDER BY created DESC")
+
+  pbInsightUrl String @default("http://127.0.0.1:4500")
+
+  updatedAt DateTime @updatedAt
+}
+
 // Registro de cada chamada à API — base pra controle de custo e auditoria.
 model Run {
   id           String   @id @default(uuid())

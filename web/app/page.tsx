@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { LuPlus, LuLoaderCircle, LuWorkflow, LuKeyRound, LuBellRing, LuX } from "react-icons/lu";
+import Link from "next/link";
+import { LuPlus, LuLoaderCircle, LuWorkflow, LuKeyRound, LuBellRing, LuX, LuSettings } from "react-icons/lu";
 import { SiJira } from "react-icons/si";
 import {
   listCards,
@@ -117,9 +118,16 @@ export default function Home() {
             Esteira de IA para chamados do SMART
           </p>
         </div>
+        <Link
+          href="/settings"
+          className="ml-auto flex items-center gap-1.5 rounded-md border border-zinc-300 px-3 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+          title="Configurações da plataforma (Jira, IA, serviços)"
+        >
+          <LuSettings className="size-4" />
+        </Link>
         <button
           onClick={() => setShowSettings(true)}
-          className="ml-auto flex items-center gap-1.5 rounded-md border border-zinc-300 px-3 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+          className="flex items-center gap-1.5 rounded-md border border-zinc-300 px-3 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
           title={
             traceSettings
               ? `Chave pessoal ativa (${traceSettings.provider})`

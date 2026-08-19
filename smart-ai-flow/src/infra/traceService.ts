@@ -1,18 +1,17 @@
-import { MODEL } from './anthropic';
 import type { TraceFileAnalysis } from '../domain/card';
+import { getSettings } from './settingsRepository';
 
 /**
  * Cliente do microserviço app_trace (Go): parseia logs de trace de banco/PowerBuilder
  * e devolve um diagnóstico estratégico por arquivo. É o que torna a análise da IA
  * mais assertiva quando o chamado vem com trace anexado.
  *
- * Por padrão reaproveita a chave e o modelo Anthropic corporativos. Opcionalmente
- * aceita um `override` — chave PESSOAL digitada pelo dev na UI, só pra teste, nunca
- * persistida no card nem no banco (ver /cards em routes.ts). O app_trace roteia por
- * substring no nome do modelo, então o mapeamento abaixo espelha essa regra.
+ * Por padrão reaproveita a chave e o modelo Anthropic configurados na tela de
+ * Configurações. Opcionalmente aceita um `override` — chave PESSOAL digitada pelo
+ * dev na UI, só pra teste, nunca persistida no card nem no banco (ver /cards em
+ * routes.ts). O app_trace roteia por substring no nome do modelo, então o
+ * mapeamento abaixo espelha essa regra.
  */
-const TRACE_SERVICE_URL = process.env.TRACE_SERVICE_URL ?? 'http://localhost:8070';
-
 interface TraceServiceResult {
   filename: string;
   event_count: number;
@@ -47,7 +46,8 @@ export async function analyzeTraces(
 ): Promise<TraceFileAnalysis[]> {
   if (files.length === 0) return [];
 
-  const modelAi = override?.modelAi || MODEL;
+  const settings = await getSettings();
+  const modelAi = override?.modelAi || settings.model;
 
   const form = new FormData();
   for (const file of files) {
@@ -58,11 +58,11 @@ export async function analyzeTraces(
 
   if (override?.apiKey) {
     appendApiKey(form, modelAi, override.apiKey, override.azureEndpoint);
-  } else if (process.env.ANTHROPIC_API_KEY) {
-    form.append('key_anthropic', process.env.ANTHROPIC_API_KEY);
+  } else if (settings.anthropicApiKey) {
+    form.append('key_anthropic', settings.anthropicApiKey);
   }
 
-  const resp = await fetch(`${TRACE_SERVICE_URL}/analyze-trace`, {
+  const resp = await fetch(`${settings.traceServiceUrl}/analyze-trace`, {
     method: 'POST',
     body: form,
   });

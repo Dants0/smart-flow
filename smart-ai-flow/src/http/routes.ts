@@ -10,6 +10,7 @@ import {
   saveCard,
   deleteCard as deleteCardRow,
 } from '../infra/cardRepository';
+import { getSettings, updateSettings } from '../infra/settingsRepository';
 
 /**
  * Rotas da esteira. Persistência real via Prisma/Postgres (cardRepository) —
@@ -117,5 +118,45 @@ export async function routes(app: FastifyInstance) {
   app.post('/jira/pending/:key/dismiss', async (req, reply) => {
     dismissedJiraKeys.add((req.params as any).key);
     return reply.code(204).send();
+  });
+
+  // Configurações da plataforma (Jira, IA, serviços) — substitui o .env pra tudo
+  // que não é bootstrap. Segredos nunca voltam em texto puro, só um flag "set".
+  app.get('/settings', async () => {
+    const s = await getSettings();
+    return {
+      anthropicApiKeySet: !!s.anthropicApiKey,
+      model: s.model,
+      aiProvider: s.aiProvider,
+      openaiApiKeySet: !!s.openaiApiKey,
+      openaiModel: s.openaiModel,
+      traceServiceUrl: s.traceServiceUrl,
+      jiraBaseUrl: s.jiraBaseUrl,
+      jiraUser: s.jiraUser,
+      jiraPasswordSet: !!s.jiraPassword,
+      jiraAssignedJql: s.jiraAssignedJql,
+      pbInsightUrl: s.pbInsightUrl,
+      updatedAt: s.updatedAt,
+    };
+  });
+
+  // Atualiza só os campos enviados. Pra segredos, o front só manda o campo se o
+  // dev de fato digitou um valor novo — omitir = mantém o que já tá salvo.
+  app.patch('/settings', async (req) => {
+    const updated = await updateSettings((req.body as any) ?? {});
+    return {
+      anthropicApiKeySet: !!updated.anthropicApiKey,
+      model: updated.model,
+      aiProvider: updated.aiProvider,
+      openaiApiKeySet: !!updated.openaiApiKey,
+      openaiModel: updated.openaiModel,
+      traceServiceUrl: updated.traceServiceUrl,
+      jiraBaseUrl: updated.jiraBaseUrl,
+      jiraUser: updated.jiraUser,
+      jiraPasswordSet: !!updated.jiraPassword,
+      jiraAssignedJql: updated.jiraAssignedJql,
+      pbInsightUrl: updated.pbInsightUrl,
+      updatedAt: updated.updatedAt,
+    };
   });
 }
