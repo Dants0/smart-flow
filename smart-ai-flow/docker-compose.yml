@@ -1,0 +1,20 @@
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: smart
+      POSTGRES_PASSWORD: smart
+      POSTGRES_DB: smart_ai_flow
+    ports:
+      - "5432:5432"
+
+  # Microserviço Go (repo separado, ver ../app_trace) que parseia logs de
+  # trace DB/PowerBuilder. O backend chama /analyze-trace em src/infra/traceService.ts.
+  trace-api:
+    build: ../app_trace
+    container_name: smart-ai-flow-trace-api
+    env_file:
+      - ../app_trace/.env
+    ports:
+      - "8070:8070"
+    restart: unless-stopped

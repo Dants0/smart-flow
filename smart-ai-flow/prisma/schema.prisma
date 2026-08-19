@@ -1,0 +1,67 @@
+// Modelo de dados da esteira. O histórico é first-class: governança
+// e auditoria dependem de saber quem moveu o quê, quando e quanto custou.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Stage {
+  NOVO
+  ANALISE
+  DESENVOLVIMENTO
+  REVISAO
+  RESOLVIDO
+  ERRO
+}
+
+model Card {
+  id         String @id @default(uuid())
+  jiraKey    String
+  module     String
+  rawTicket  String
+  images     Json? // CardImage[] (screenshots em base64 anexados ao chamado)
+  traceFiles Json? // CardTraceFile[] (logs de trace anexados)
+  stage      Stage  @default(NOVO)
+
+  // artefatos da IA, guardados como JSON validado pelos contratos Zod
+  analysis      Json?
+  proposal      Json?
+  traceAnalysis Json? // TraceFileAnalysis[] — diagnóstico do microserviço app_trace
+
+  history History[]
+  runs    Run[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([module, stage])
+}
+
+model History {
+  id     String   @id @default(uuid())
+  card   Card     @relation(fields: [cardId], references: [id], onDelete: Cascade)
+  cardId String
+  from   Stage
+  to     Stage
+  by     String // 'IA' | 'DEV'
+  note   String?
+  at     DateTime @default(now())
+}
+
+// Registro de cada chamada à API — base pra controle de custo e auditoria.
+model Run {
+  id           String   @id @default(uuid())
+  card         Card     @relation(fields: [cardId], references: [id], onDelete: Cascade)
+  cardId       String
+  stage        Stage
+  model        String
+  inputTokens  Int
+  outputTokens Int
+  ok           Boolean
+  at           DateTime @default(now())
+}
