@@ -135,6 +135,13 @@ docker compose up -d --build         # aplicar mudanças de código
 O **Monitor de Recursos** (dentro de Configurações) mostra o status ao vivo de
 todos os serviços, a fila de processamento e o consumo de IA dos últimos 30 dias.
 
+Quem checa é o **backend**, de dentro da rede do compose — por isso ele usa o
+nome do serviço (`http://trace-api:8070`, `http://pb-insight:4500`) e não
+`localhost`, que ali seria o próprio container. O compose já passa esses
+endereços em `TRACE_SERVICE_URL` e `PB_INSIGHT_URL`; só sobrescreva no `.env` se
+os microserviços rodarem em outra máquina. Rodando o backend fora do Docker
+(`npm run dev`), sem essas variáveis, o padrão volta a ser `localhost`.
+
 ### Acessar de outra máquina
 
 O endereço da API é embutido no build do frontend. Para acessar de outro

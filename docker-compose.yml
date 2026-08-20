@@ -30,11 +30,20 @@ services:
       PORT: 3333
       JWT_SECRET: ${JWT_SECRET:?defina JWT_SECRET no .env — rode o setup}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY:?defina ENCRYPTION_KEY no .env — rode o setup}
+      # Mesma regra do banco: dentro da rede do compose cada microserviço é
+      # alcançável pelo nome do serviço. `localhost` aqui apontaria pro próprio
+      # container do backend — era o que deixava os dois OFFLINE no monitor.
+      TRACE_SERVICE_URL: ${TRACE_SERVICE_URL:-http://trace-api:8070}
+      PB_INSIGHT_URL: ${PB_INSIGHT_URL:-http://pb-insight:4500}
     ports:
       - "3333:3333"
     depends_on:
       db:
         condition: service_healthy
+      trace-api:
+        condition: service_started
+      pb-insight:
+        condition: service_started
     restart: unless-stopped
 
   web:

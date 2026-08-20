@@ -70,10 +70,20 @@ async function checkPbInsight(pbInsightUrl: string): Promise<ResourceStatus> {
     version?: { objectCount?: number; ingestedAt?: string };
   };
 
-  const parts: string[] = [];
-  if (data.version?.objectCount) {
-    parts.push(`${data.version.objectCount.toLocaleString('pt-BR')} objetos`);
+  // Serviço no ar sem grafo indexado: `ingestedAt` volta na época zero, e ler
+  // isso como data daria "indexado há 20685d". O que o dev precisa saber aqui
+  // é que falta rodar o ingest — a análise sai sem grounding até lá.
+  if (!data.version?.objectCount) {
+    return {
+      id: 'pb_insight',
+      label: 'PB Insight',
+      ok: true,
+      detail: 'no ar, sem índice — rode o ingest (ver README)',
+      latencyMs,
+    };
   }
+
+  const parts: string[] = [`${data.version.objectCount.toLocaleString('pt-BR')} objetos`];
   // Idade do índice importa: analisar contra um grafo de semanas atrás significa
   // apontar código que já mudou. `npm run ingest` no pb-insight reindexa.
   let stale = false;

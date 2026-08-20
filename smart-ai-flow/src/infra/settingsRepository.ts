@@ -1,3 +1,4 @@
+import type { PlatformSettings as PlatformSettingsRow } from '@prisma/client';
 import { prisma } from './db';
 
 /**
@@ -23,23 +24,57 @@ export interface PlatformSettings {
   updatedAt: string;
 }
 
+/**
+ * Endereço dos microserviços. Vem do ambiente porque é topologia de deploy, não
+ * preferência de usuário: no Docker o compose passa o nome do serviço
+ * (`http://trace-api:8070`), e fora dele o fallback de loopback continua
+ * valendo pra quem sobe o backend com `npm run dev`.
+ */
+const TRACE_SERVICE_URL = process.env.TRACE_SERVICE_URL || 'http://localhost:8070';
+const PB_INSIGHT_URL = process.env.PB_INSIGHT_URL || 'http://127.0.0.1:4500';
+
 const DEFAULTS = {
   model: 'claude-sonnet-5',
   aiProvider: 'anthropic',
   openaiModel: 'gpt-4o',
-  traceServiceUrl: 'http://localhost:8070',
+  traceServiceUrl: TRACE_SERVICE_URL,
   jiraAssignedJql:
     'assignee = currentUser() AND resolution = Unresolved ORDER BY created DESC',
-  pbInsightUrl: 'http://127.0.0.1:4500',
+  pbInsightUrl: PB_INSIGHT_URL,
 };
+
+const LOOPBACK = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:|\/|$)/i;
+
+/**
+ * Conserta a linha gravada antes de o backend passar a rodar em container: um
+ * loopback salvo no banco aponta pro próprio container do backend e nunca
+ * alcança o microserviço — é o que fazia app_trace e PB Insight aparecerem
+ * OFFLINE no monitor com os dois no ar.
+ *
+ * Só reescreve o que ainda é loopback, e só quando o ambiente diz qual é o
+ * endereço certo: uma URL apontada pra outra máquina na tela de Configurações
+ * é escolha deliberada e fica intacta.
+ */
+async function repairLoopbackUrls(row: PlatformSettingsRow): Promise<PlatformSettingsRow> {
+  const data: Record<string, string> = {};
+  if (process.env.TRACE_SERVICE_URL && LOOPBACK.test(row.traceServiceUrl)) {
+    data.traceServiceUrl = TRACE_SERVICE_URL;
+  }
+  if (process.env.PB_INSIGHT_URL && LOOPBACK.test(row.pbInsightUrl)) {
+    data.pbInsightUrl = PB_INSIGHT_URL;
+  }
+  if (Object.keys(data).length === 0) return row;
+  return prisma.platformSettings.update({ where: { id: 1 }, data });
+}
 
 /** Cria a linha única (id=1) na primeira leitura, se ainda não existir. */
 async function ensureRow() {
-  return prisma.platformSettings.upsert({
+  const row = await prisma.platformSettings.upsert({
     where: { id: 1 },
     update: {},
     create: { id: 1, ...DEFAULTS },
   });
+  return repairLoopbackUrls(row);
 }
 
 export async function getSettings(): Promise<PlatformSettings> {
