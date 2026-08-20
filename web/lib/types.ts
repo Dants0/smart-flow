@@ -78,6 +78,9 @@ export interface HistoryEntry {
   from: Stage;
   to: Stage;
   by: Owner;
+  /** Qual dev agiu — ausente quando a transição foi da IA. */
+  userId?: string;
+  userName?: string;
   at: string;
   note?: string;
 }
@@ -99,6 +102,11 @@ export interface Card {
   analysis?: AnalyzerOutput;
   proposal?: ProposerOutput;
   traceAnalysis?: TraceFileAnalysis[];
+  /** false = a análise rodou sem trecho real de código (pb-insight indisponível). */
+  grounded?: boolean;
+  /** O que o dev realmente aplicou — vai pra base de conhecimento no RESOLVIDO. */
+  resolutionText?: string;
+  createdById?: string;
   history: HistoryEntry[];
   createdAt: string;
   updatedAt: string;

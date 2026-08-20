@@ -1,4 +1,5 @@
-import type { Card, Stage } from "@/lib/types";
+import type { Stage } from "@/lib/types";
+import type { CardSummary } from "@/lib/api";
 import { STAGE_META } from "@/lib/stageMeta";
 import { CardTile } from "./CardTile";
 
@@ -8,8 +9,8 @@ export function BoardColumn({
   onSelect,
 }: {
   stage: Stage;
-  cards: Card[];
-  onSelect: (card: Card) => void;
+  cards: CardSummary[];
+  onSelect: (card: CardSummary) => void;
 }) {
   const meta = STAGE_META[stage];
   const Icon = meta.icon;

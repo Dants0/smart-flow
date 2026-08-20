@@ -1,4 +1,5 @@
 import { getSettings } from './settingsRepository';
+import type { Card } from '../domain/card';
 
 /**
  * Cliente do PB Insight — serviço próprio (pasta `pb-insight/`, projeto separado)
@@ -55,6 +56,18 @@ interface EventBodyResponse {
   }[];
 }
 
+interface PbTicket {
+  id: string;
+  externalId: string;
+  title: string;
+  resolutionText: string;
+}
+
+interface SimilarTicketsResponse {
+  count: number;
+  results: { ticket: PbTicket; score: number }[];
+}
+
 async function pbInsightGet<T>(baseUrl: string, path: string): Promise<T> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
@@ -67,10 +80,40 @@ async function pbInsightGet<T>(baseUrl: string, path: string): Promise<T> {
   }
 }
 
-export async function retrieveContext(module: string, query: string): Promise<string> {
+async function pbInsightPost<T>(baseUrl: string, path: string, body: unknown): Promise<T> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  try {
+    const resp = await fetch(`${baseUrl}${path}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+    if (!resp.ok && resp.status !== 409) {
+      throw new Error(`pb-insight respondeu ${resp.status}: ${await resp.text()}`);
+    }
+    return (await resp.json()) as T;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+export interface RetrievedContext {
+  text: string;
+  /** false = a IA vai analisar sem nenhum trecho real de código (pb-insight fora
+   * do ar, ou nada bateu). O card guarda isso pra UI avisar — análise sem
+   * grounding soa tão confiante quanto uma com, e é aí que mora o risco. */
+  grounded: boolean;
+}
+
+export async function retrieveContext(module: string, query: string): Promise<RetrievedContext> {
   const keywords = extractKeywords(query);
   if (keywords.length === 0) {
-    return `// nenhum termo relevante extraído do texto pra buscar no PB Insight (módulo=${module}).`;
+    return {
+      grounded: false,
+      text: `// nenhum termo relevante extraído do texto pra buscar no PB Insight (módulo=${module}).`,
+    };
   }
 
   const { pbInsightUrl } = await getSettings();
@@ -118,9 +161,77 @@ export async function retrieveContext(module: string, query: string): Promise<st
     }
   }
 
-  if (blocks.length === 0) {
-    return `// PB Insight não encontrou objetos pra: ${keywords.join(', ')} (módulo=${module}). Serviço em ${pbInsightUrl} está no ar?`;
+  // Chamados parecidos já resolvidos — busca semântica (embedding), não por
+  // palavra-chave. É o loop de feedback: precedente real pesa mais que só código.
+  let similarBlock = '';
+  try {
+    const similar = await pbInsightGet<SimilarTicketsResponse>(
+      pbInsightUrl,
+      `/tickets/similar?q=${encodeURIComponent(query)}&limit=3`,
+    );
+    if (similar.results.length > 0) {
+      similarBlock =
+        '\n\n# Chamados parecidos já resolvidos (precedente real)\n' +
+        similar.results
+          .map((r) => `## ${r.ticket.externalId} — ${r.ticket.title}\n${r.ticket.resolutionText}`)
+          .join('\n\n');
+    }
+  } catch {
+    // base de tickets vazia, pb-insight fora do ar, etc — segue sem precedente
   }
 
-  return blocks.join('\n\n');
+  if (blocks.length === 0 && !similarBlock) {
+    return {
+      grounded: false,
+      text: `// PB Insight não encontrou objetos pra: ${keywords.join(', ')} (módulo=${module}). Serviço em ${pbInsightUrl} está no ar?`,
+    };
+  }
+
+  return { grounded: blocks.length > 0, text: blocks.join('\n\n') + similarBlock };
+}
+
+/**
+ * Fecha o loop de feedback: quando o dev confirma RESOLVIDO, o card vira um
+ * Ticket real no pb-insight (base de conhecimento, SPEC §13.5) + um link pra
+ * cada objeto que a análise apontou como afetado. Best-effort de propósito —
+ * nunca deve derrubar a confirmação de RESOLVIDO do dev por causa disso.
+ */
+export async function promoteResolvedTicket(card: Card): Promise<void> {
+  const { pbInsightUrl } = await getSettings();
+
+  const title = card.proposal?.summary ?? card.analysis?.rootCause ?? card.jiraKey;
+
+  // A solução REAL do dev é a fonte de verdade aqui. O diff da IA só entra
+  // quando ele não descreveu o que fez — se o dev corrigiu de outro jeito e a
+  // gente gravasse a proposta da IA, a base de conhecimento aprenderia errado
+  // e o sistema pioraria a cada chamado.
+  const resolutionParts = [
+    card.analysis?.rootCause ? `Causa raiz: ${card.analysis.rootCause}` : '',
+    card.resolutionText
+      ? `Solução aplicada pelo dev:\n${card.resolutionText}`
+      : card.proposal?.diff
+        ? `Diff proposto pela IA (dev não descreveu a solução real):\n${card.proposal.diff}`
+        : '',
+  ].filter(Boolean);
+  const resolveNote = card.history[card.history.length - 1]?.note;
+  if (resolveNote) resolutionParts.push(`Nota do dev: ${resolveNote}`);
+
+  const ticket = await pbInsightPost<Partial<PbTicket>>(pbInsightUrl, '/tickets', {
+    externalId: card.jiraKey,
+    title,
+    descriptionRaw: card.rawTicket,
+    resolutionText: resolutionParts.join('\n\n') || 'Resolvido sem detalhes registrados.',
+    module: card.module,
+    resolvedAt: card.updatedAt,
+  });
+  if (!ticket.id) return; // 409 (já cadastrado) ou resposta inesperada — sem id, não dá pra linkar objetos
+
+  for (const obj of card.analysis?.affectedObjects ?? []) {
+    await pbInsightPost(pbInsightUrl, `/tickets/${ticket.id}/links`, {
+      objectName: obj.name,
+      notes: obj.reason,
+    }).catch(() => {
+      // objeto pode não bater com o nome real no grafo (nome vem do LLM) — ok, ignora esse link
+    });
+  }
 }

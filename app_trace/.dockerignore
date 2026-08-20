@@ -1,0 +1,7 @@
+# Chaves de IA chegam via `environment:` do compose, não por arquivo.
+.env
+.env.*
+!.example.env
+
+*.log
+.git

@@ -48,6 +48,7 @@ export function CardDetail({
   const Icon = meta.icon;
 
   const [rejectNote, setRejectNote] = useState("");
+  const [resolutionText, setResolutionText] = useState("");
   const [lightbox, setLightbox] = useState<string | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [busy, setBusy] = useState<null | "resolve" | "reject" | "retry" | "delete">(
@@ -253,6 +254,18 @@ export function CardDetail({
                 </span>
               </div>
 
+              {/* Sem isto, uma análise sem código real soa tão confiante quanto uma com. */}
+              {card.grounded === false && (
+                <div className="mb-3 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs leading-relaxed text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-300">
+                  <LuTriangleAlert className="mt-0.5 size-4 shrink-0" />
+                  <span>
+                    <strong>Análise sem contexto de código.</strong> O PB Insight não
+                    retornou nenhum trecho do codebase — os objetos citados abaixo podem
+                    não existir. Suba o serviço e reprocesse antes de confiar no diff.
+                  </span>
+                </div>
+              )}
+
               <div className="mb-3 flex items-start gap-2 text-sm text-zinc-700 dark:text-zinc-300">
                 <LuCrosshair className="mt-0.5 size-4 shrink-0 text-blue-500" />
                 <p className="font-medium">{card.analysis.rootCause}</p>
@@ -366,6 +379,8 @@ export function CardDetail({
                     <span className="font-medium text-zinc-700 dark:text-zinc-300">
                       {h.from} → {h.to}
                     </span>{" "}
+                    {/* qual dev, não só "um dev" — rastreabilidade real num time */}
+                    {h.userName && <span className="text-zinc-600 dark:text-zinc-400">por {h.userName} </span>}
                     · {timeAgo(h.at)}
                     {h.note ? ` · ${h.note}` : ""}
                   </span>
@@ -384,6 +399,22 @@ export function CardDetail({
         {/* ações do gate REVISAO */}
         {card.stage === "REVISAO" && (
           <div className="border-t border-zinc-200 px-5 py-4 dark:border-zinc-800">
+            <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-300">
+              O que você aplicou de fato?
+            </label>
+            <textarea
+              value={resolutionText}
+              onChange={(e) => setResolutionText(e.target.value)}
+              placeholder="Ex: o diff da IA não servia; ajustei o WHERE de d_agm09tab pra amarrar paciente + OS."
+              rows={3}
+              className="w-full resize-none rounded-md border border-zinc-300 px-3 py-2 text-sm text-zinc-800 outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+            />
+            <p className="mb-3 mt-1 text-[11px] leading-relaxed text-zinc-400">
+              É este texto que vai pra base de conhecimento e alimenta chamados
+              futuros. Em branco, a base guarda o diff proposto pela IA — que pode
+              não ser o que resolveu.
+            </p>
+
             <textarea
               value={rejectNote}
               onChange={(e) => setRejectNote(e.target.value)}
@@ -407,7 +438,14 @@ export function CardDetail({
                 Rejeitar, pedir nova proposta
               </button>
               <button
-                onClick={() => run("resolve", () => resolveCard(card.id))}
+                onClick={() =>
+                  run("resolve", () =>
+                    resolveCard(card.id, {
+                      note: rejectNote || undefined,
+                      resolutionText: resolutionText || undefined,
+                    }),
+                  )
+                }
                 disabled={busy !== null}
                 className="flex flex-1 items-center justify-center gap-1.5 rounded-md bg-emerald-600 px-3 py-2 text-sm font-medium text-white hover:bg-emerald-500 disabled:opacity-50"
               >

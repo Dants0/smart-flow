@@ -3,6 +3,8 @@ import { moveCard, type Card } from '../domain/card';
 import { runAnalysis } from '../agents/analyzer';
 import { runProposal } from '../agents/proposer';
 import { analyzeTraces, type TraceProviderOverride } from '../infra/traceService';
+import { recordRun } from '../infra/runRepository';
+import type { LlmResult } from '../infra/llm';
 
 /**
  * O orquestrador é o único lugar que fala com a API usando o token da
@@ -10,8 +12,8 @@ import { analyzeTraces, type TraceProviderOverride } from '../infra/traceService
  * atual for automático (dono = IA). Ao chegar num gate humano (REVISAO),
  * ele para e devolve o card pro dev agir.
  *
- * Toda transição passa por moveCard -> vira histórico auditável.
- * O persist() é injetado pra você plugar no Prisma (ou onde quiser).
+ * Toda transição passa por moveCard -> vira histórico auditável, e toda
+ * chamada ao LLM vira uma linha em Run -> auditoria de custo.
  */
 
 type Persist = (card: Card) => Promise<void>;
@@ -26,22 +28,33 @@ export async function advance(
   // Enquanto o estágio atual for de IA, executa e avança.
   // NOVO é de DEV, mas é o ponto de partida: ao criar, disparamos ANALISE.
   while (current.stage === Stage.NOVO || isAutomatic(current.stage)) {
+    const stageBefore = current.stage;
     try {
       current = await runStage(current, traceProvider);
       await persist(current);
     } catch (err) {
-      current = moveCard(
-        current,
-        Stage.ERRO,
-        'IA',
-        err instanceof Error ? err.message : 'falha desconhecida',
-      );
+      const message = err instanceof Error ? err.message : 'falha desconhecida';
+      await recordRun({ cardId: current.id, stage: stageBefore, ok: false, errorMessage: message });
+      current = moveCard(current, Stage.ERRO, 'IA', message);
       await persist(current);
       break;
     }
   }
 
   return current; // parou num gate humano (REVISAO) ou em ERRO
+}
+
+/** Grava o consumo do LLM na tabela Run — nunca deixa a falha de auditoria derrubar o pipeline. */
+async function logUsage(cardId: string, stage: Stage, usage: LlmResult): Promise<void> {
+  await recordRun({
+    cardId,
+    stage,
+    ok: true,
+    provider: usage.provider,
+    model: usage.model,
+    inputTokens: usage.inputTokens,
+    outputTokens: usage.outputTokens,
+  });
 }
 
 async function runStage(card: Card, traceProvider?: TraceProviderOverride): Promise<Card> {
@@ -64,13 +77,17 @@ async function runStage(card: Card, traceProvider?: TraceProviderOverride): Prom
             }
           : card;
 
-      const analysis = await runAnalysis(withTrace);
-      const withAnalysis = { ...withTrace, analysis };
+      const { output: analysis, usage, grounded } = await runAnalysis(withTrace);
+      await logUsage(card.id, Stage.ANALISE, usage);
+
+      const withAnalysis = { ...withTrace, analysis, grounded };
       return moveCard(withAnalysis, Stage.DESENVOLVIMENTO, 'IA', analysis.rootCause);
     }
 
     case Stage.DESENVOLVIMENTO: {
-      const proposal = await runProposal(card);
+      const { output: proposal, usage } = await runProposal(card);
+      await logUsage(card.id, Stage.DESENVOLVIMENTO, usage);
+
       const withProposal = { ...card, proposal };
       // para aqui: REVISAO é gate humano
       return moveCard(withProposal, Stage.REVISAO, 'IA', proposal.summary);
@@ -81,17 +98,31 @@ async function runStage(card: Card, traceProvider?: TraceProviderOverride): Prom
   }
 }
 
-/** Ação humana: dev confirma que o cenário original não ocorre mais. */
-export function resolve(card: Card, note = 'validado pelo dev'): Card {
-  return moveCard(card, Stage.RESOLVIDO, 'DEV', note);
+/**
+ * Ação humana: dev confirma que o cenário original não ocorre mais.
+ * `resolutionText` é o que ele REALMENTE aplicou — pode divergir do diff da IA,
+ * e é isso que vai pra base de conhecimento (ver promoteResolvedTicket).
+ */
+export function resolve(
+  card: Card,
+  note = 'validado pelo dev',
+  resolutionText?: string,
+  userId?: string,
+): Card {
+  const moved = moveCard(card, Stage.RESOLVIDO, 'DEV', note, userId);
+  return resolutionText ? { ...moved, resolutionText } : moved;
 }
 
 /** Ação humana: dev rejeita o diff e pede nova proposta. */
-export function requestNewProposal(card: Card, note: string): Card {
-  return moveCard(card, Stage.DESENVOLVIMENTO, 'DEV', note);
+export function requestNewProposal(card: Card, note: string, userId?: string): Card {
+  return moveCard(card, Stage.DESENVOLVIMENTO, 'DEV', note, userId);
 }
 
 /** Ação humana: dev reprocessa um card que caiu em ERRO (ex: chave inválida na hora). */
-export function retryFromError(card: Card, note = 'reprocessando após erro'): Card {
-  return moveCard(card, Stage.ANALISE, 'DEV', note);
+export function retryFromError(
+  card: Card,
+  note = 'reprocessando após erro',
+  userId?: string,
+): Card {
+  return moveCard(card, Stage.ANALISE, 'DEV', note, userId);
 }

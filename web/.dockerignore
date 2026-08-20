@@ -1,0 +1,13 @@
+# node_modules do host tem binários compilados pra outra plataforma —
+# o `npm ci` do Dockerfile reinstala pro Linux.
+node_modules
+.next
+out
+
+# NEXT_PUBLIC_API_URL chega como build ARG, não por arquivo.
+.env
+.env.*
+!.env.example
+
+*.log
+.git

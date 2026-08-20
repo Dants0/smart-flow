@@ -1,24 +1,15 @@
 "use client";
 
-import { LuBot, LuUser, LuImage, LuActivity } from "react-icons/lu";
-import type { Card } from "@/lib/types";
+import { LuBot, LuUser, LuImage, LuActivity, LuTriangleAlert } from "react-icons/lu";
+import type { CardSummary } from "@/lib/api";
 import { STAGE_OWNER } from "@/lib/types";
 import { timeAgo } from "@/lib/time";
-
-function preview(card: Card): string {
-  if (card.stage === "ERRO") {
-    return card.history[card.history.length - 1]?.note ?? "Falha desconhecida";
-  }
-  if (card.proposal) return card.proposal.summary;
-  if (card.analysis) return card.analysis.rootCause;
-  return card.rawTicket;
-}
 
 export function CardTile({
   card,
   onClick,
 }: {
-  card: Card;
+  card: CardSummary;
   onClick: () => void;
 }) {
   const owner = STAGE_OWNER[card.stage];
@@ -39,7 +30,7 @@ export function CardTile({
       </div>
 
       <p className="mb-2 line-clamp-2 text-sm text-zinc-700 dark:text-zinc-300">
-        {preview(card)}
+        {card.preview}
       </p>
 
       <div className="flex items-center justify-between text-[11px] text-zinc-400">
@@ -48,19 +39,28 @@ export function CardTile({
           {owner === "IA" ? "IA trabalhando" : "aguardando dev"}
         </span>
         <span className="flex items-center gap-2">
-          {!!card.images?.length && (
-            <span className="flex items-center gap-0.5" title={`${card.images.length} imagem(ns)`}>
-              <LuImage className="size-3" />
-              {card.images.length}
+          {/* análise sem código real: quem olha o board precisa saber antes de abrir */}
+          {!card.grounded && (
+            <span
+              className="flex items-center text-amber-500"
+              title="Análise feita sem contexto de código (PB Insight indisponível)"
+            >
+              <LuTriangleAlert className="size-3" />
             </span>
           )}
-          {!!card.traceFiles?.length && (
+          {card.imageCount > 0 && (
+            <span className="flex items-center gap-0.5" title={`${card.imageCount} imagem(ns)`}>
+              <LuImage className="size-3" />
+              {card.imageCount}
+            </span>
+          )}
+          {card.traceFileCount > 0 && (
             <span
               className="flex items-center gap-0.5"
-              title={`${card.traceFiles.length} log(s) de trace`}
+              title={`${card.traceFileCount} log(s) de trace`}
             >
               <LuActivity className="size-3" />
-              {card.traceFiles.length}
+              {card.traceFileCount}
             </span>
           )}
           {timeAgo(card.updatedAt)}

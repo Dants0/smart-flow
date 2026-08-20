@@ -1,3 +1,11 @@
+# Sobe a infraestrutura que a esteira depende. Os dois processos Node
+# (backend e web) continuam fora daqui de propósito: em dev você quer
+# hot-reload, e containerizá-los só atrapalharia o ciclo de edição.
+#
+#   docker compose up -d      # postgres + app_trace
+#   npm run dev               # backend  (aqui, porta 3333)
+#   npm run serve             # ../pb-insight (porta 4500)
+#   npm run dev               # ../web    (porta 3000)
 services:
   db:
     image: postgres:16
@@ -7,9 +15,16 @@ services:
       POSTGRES_DB: smart_ai_flow
     ports:
       - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U smart -d smart_ai_flow"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
-  # Microserviço Go (repo separado, ver ../app_trace) que parseia logs de
-  # trace DB/PowerBuilder. O backend chama /analyze-trace em src/infra/traceService.ts.
+  # Microserviço Go (repo em ../app_trace) que parseia logs de trace
+  # DB/PowerBuilder. O backend chama /analyze-trace em infra/traceService.ts.
   trace-api:
     build: ../app_trace
     container_name: smart-ai-flow-trace-api
@@ -18,3 +33,8 @@ services:
     ports:
       - "8070:8070"
     restart: unless-stopped
+
+volumes:
+  # Nomeado: sem isto, um `docker compose down -v` levava junto todos os cards
+  # já analisados — que agora são persistidos e caros de reproduzir.
+  pgdata:

@@ -1,5 +1,11 @@
+/**
+ * Onde estão os fontes exportados do SMART Desktop. O caminho varia por
+ * máquina (e é outro dentro do container), então vem de `PB_INSIGHT_WS_ROOT`.
+ * O fallback é o layout padrão de quem clona o repo no Windows — todo comando
+ * ainda aceita sobrescrever via argumento/flag.
+ */
 export const DEFAULT_WS_OBJECTS_ROOT =
-  "C:\\controle de versão\\smart_desktop\\ws_objects";
+  process.env["PB_INSIGHT_WS_ROOT"] ?? "C:\\controle de versão\\smart_desktop\\ws_objects";
 
 export const DEFAULT_GRAPH_PATH = ".data/graph.json";
 export const DEFAULT_SNAPSHOTS_DIR = ".data/snapshots";

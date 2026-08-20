@@ -1,0 +1,91 @@
+# Stack completa do SMART AI Flow. Sobe tudo com um comando:
+#
+#   1. copie .env.example para .env e rode o setup (gera os segredos)
+#   2. docker compose up -d --build
+#   3. abra http://localhost:3000 e crie o usuário administrador
+#
+# Ver README.md para o passo a passo e para a ingestão do PB Insight.
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: smart
+      POSTGRES_PASSWORD: smart
+      POSTGRES_DB: smart_ai_flow
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U smart -d smart_ai_flow"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  backend:
+    build: ./smart-ai-flow
+    environment:
+      # O host é `db`, não localhost: dentro da rede do compose cada serviço
+      # é alcançável pelo próprio nome.
+      DATABASE_URL: postgresql://smart:smart@db:5432/smart_ai_flow
+      PORT: 3333
+      JWT_SECRET: ${JWT_SECRET:?defina JWT_SECRET no .env — rode o setup}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?defina ENCRYPTION_KEY no .env — rode o setup}
+    ports:
+      - "3333:3333"
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ./web
+      args:
+        # Embutido no bundle em tempo de build. `localhost` funciona porque o
+        # navegador roda na mesma máquina que os containers. Para acessar de
+        # outro computador, troque pelo IP desta máquina e refaça o build.
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:3333}
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  # Análise de logs de trace (DB/PowerBuilder). Opcional: sem ele, cards com
+  # trace anexado falham na análise de trace, o resto da esteira funciona.
+  trace-api:
+    build: ./app_trace
+    environment:
+      PORT: ":8070"
+      # Chaves opcionais: o backend manda a dele na requisição.
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    ports:
+      - "8070:8070"
+    restart: unless-stopped
+
+  # RAG sobre o codebase PowerBuilder. Precisa do grafo indexado — ver README,
+  # seção "PB Insight". Sem ele a IA analisa sem contexto de código e o card
+  # exibe o aviso de análise sem grounding.
+  pb-insight:
+    build: ./pb-insight
+    environment:
+      PORT: 4500
+      HOST: 0.0.0.0
+      PB_INSIGHT_WS_ROOT: /smart_desktop/ws_objects
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      PB_INSIGHT_OPENAI_MODEL: ${PB_INSIGHT_OPENAI_MODEL:-gpt-4o-mini}
+    volumes:
+      # Índice gerado pelo ingest — volume nomeado pra sobreviver a rebuild.
+      - pbinsight_data:/app/.data
+      # Fonte do SMART Desktop, só leitura. Aponta pra uma pasta vazia quando
+      # a máquina não tem o repo, e aí o ingest simplesmente não acha nada.
+      - ${SMART_DESKTOP_PATH:-./.empty}:/smart_desktop:ro
+    ports:
+      - "4500:4500"
+    restart: unless-stopped
+
+volumes:
+  # Nomeados: `docker compose down` (sem -v) preserva cards e índice.
+  pgdata:
+  pbinsight_data:

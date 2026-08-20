@@ -7,6 +7,9 @@ import { getSettings, type PlatformSettings } from './settingsRepository';
  * Suporta Anthropic (padrão) ou OpenAI, escolhido pela tela de Configurações
  * (aiProvider) — lido a cada chamada, nunca cacheado, pra uma troca de chave
  * ou provider valer na hora, sem restart.
+ *
+ * Devolve também o consumo de tokens: é o que o orquestrador grava na tabela
+ * Run pra auditoria de custo (a razão declarada de o token viver só aqui).
  */
 export interface LlmRequest {
   system: string;
@@ -15,7 +18,15 @@ export interface LlmRequest {
   maxTokens: number;
 }
 
-export async function callLlm(req: LlmRequest): Promise<string> {
+export interface LlmResult {
+  text: string;
+  provider: string;
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+}
+
+export async function callLlm(req: LlmRequest): Promise<LlmResult> {
   const settings = await getSettings();
   return settings.aiProvider === 'openai' ? callOpenAI(req, settings) : callAnthropic(req, settings);
 }
@@ -23,7 +34,7 @@ export async function callLlm(req: LlmRequest): Promise<string> {
 async function callAnthropic(
   { system, userText, images, maxTokens }: LlmRequest,
   settings: PlatformSettings,
-): Promise<string> {
+): Promise<LlmResult> {
   if (!settings.anthropicApiKey) {
     throw new Error('Chave da Anthropic não configurada — veja Configurações > IA.');
   }
@@ -50,16 +61,24 @@ async function callAnthropic(
     messages: [{ role: 'user', content }],
   });
 
-  return resp.content
+  const text = resp.content
     .filter((b): b is { type: 'text'; text: string } => b.type === 'text')
     .map((b) => b.text)
     .join('\n');
+
+  return {
+    text,
+    provider: 'anthropic',
+    model: settings.model,
+    inputTokens: resp.usage?.input_tokens ?? 0,
+    outputTokens: resp.usage?.output_tokens ?? 0,
+  };
 }
 
 async function callOpenAI(
   { system, userText, images, maxTokens }: LlmRequest,
   settings: PlatformSettings,
-): Promise<string> {
+): Promise<LlmResult> {
   if (!settings.openaiApiKey) {
     throw new Error('Chave da OpenAI não configurada — veja Configurações > IA.');
   }
@@ -92,10 +111,20 @@ async function callOpenAI(
     throw new Error(`OpenAI respondeu ${resp.status}: ${await resp.text()}`);
   }
 
-  const json = (await resp.json()) as { choices?: { message?: { content?: string } }[] };
+  const json = (await resp.json()) as {
+    choices?: { message?: { content?: string } }[];
+    usage?: { prompt_tokens?: number; completion_tokens?: number };
+  };
   const text = json.choices?.[0]?.message?.content;
   if (!text) {
     throw new Error('OpenAI não retornou conteúdo na resposta');
   }
-  return text;
+
+  return {
+    text,
+    provider: 'openai',
+    model: settings.openaiModel,
+    inputTokens: json.usage?.prompt_tokens ?? 0,
+    outputTokens: json.usage?.completion_tokens ?? 0,
+  };
 }

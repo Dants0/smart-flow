@@ -26,6 +26,9 @@ export interface HistoryEntry {
   from: Stage;
   to: Stage;
   by: 'IA' | 'DEV';
+  /** Qual dev — ausente quando a transição foi da IA. */
+  userId?: string;
+  userName?: string;
   at: string; // ISO
   note?: string;
 }
@@ -50,6 +53,12 @@ export interface Card {
   proposal?: ProposerOutput;
   traceAnalysis?: TraceFileAnalysis[]; // diagnóstico do app_trace, se houver trace anexado
 
+  /** false = a análise rodou sem trecho real de código (pb-insight indisponível). */
+  grounded?: boolean;
+  /** O que o dev REALMENTE aplicou — pode divergir do diff proposto pela IA. */
+  resolutionText?: string;
+  createdById?: string;
+
   history: HistoryEntry[];
   createdAt: string;
   updatedAt: string;
@@ -62,6 +71,7 @@ export function createCard(input: {
   rawTicket: string;
   images?: CardImage[];
   traceFiles?: CardTraceFile[];
+  createdById?: string;
 }): Card {
   const now = new Date().toISOString();
   return {
@@ -73,12 +83,16 @@ export function createCard(input: {
   };
 }
 
-/** Move o card de estágio validando a transição e registrando no histórico. */
+/**
+ * Move o card de estágio validando a transição e registrando no histórico.
+ * `userId` identifica QUAL dev agiu (omitido quando quem age é a IA).
+ */
 export function moveCard(
   card: Card,
   to: Stage,
   by: 'IA' | 'DEV',
   note?: string,
+  userId?: string,
 ): Card {
   assertTransition(card.stage, to);
   const now = new Date().toISOString();
@@ -86,7 +100,7 @@ export function moveCard(
     ...card,
     stage: to,
     updatedAt: now,
-    history: [...card.history, { from: card.stage, to, by, at: now, note }],
+    history: [...card.history, { from: card.stage, to, by, at: now, note, userId }],
   };
 }
 

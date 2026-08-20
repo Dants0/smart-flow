@@ -1,0 +1,14 @@
+# node_modules do host tem binários compilados pra outra plataforma —
+# o `npm ci` do Dockerfile reinstala pro Linux.
+node_modules
+dist
+
+# Segredos ficam no .env da raiz e chegam via `environment:` do compose.
+# Copiar o .env local pra dentro da imagem vazaria credenciais no registry.
+.env
+.env.*
+!.env.example
+
+*.log
+.dev-log.txt
+.git

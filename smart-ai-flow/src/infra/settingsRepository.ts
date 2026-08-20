@@ -16,8 +16,6 @@ export interface PlatformSettings {
   traceServiceUrl: string;
 
   jiraBaseUrl: string | null;
-  jiraUser: string | null;
-  jiraPassword: string | null;
   jiraAssignedJql: string;
 
   pbInsightUrl: string;
@@ -75,8 +73,6 @@ function toSettings(row: Awaited<ReturnType<typeof ensureRow>>): PlatformSetting
     openaiModel: row.openaiModel,
     traceServiceUrl: row.traceServiceUrl,
     jiraBaseUrl: row.jiraBaseUrl,
-    jiraUser: row.jiraUser,
-    jiraPassword: row.jiraPassword,
     jiraAssignedJql: row.jiraAssignedJql,
     pbInsightUrl: row.pbInsightUrl,
     updatedAt: row.updatedAt.toISOString(),

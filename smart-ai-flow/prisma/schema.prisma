@@ -19,6 +19,43 @@ enum Stage {
   ERRO
 }
 
+// Dev que usa a plataforma. As credenciais do Jira são POR USUÁRIO — sem isso,
+// `assignee = currentUser()` resolveria pra uma conta única e todo mundo veria
+// os chamados da mesma pessoa. A senha do Jira é guardada cifrada (AES-256-GCM,
+// ver infra/crypto.ts) porque precisa ser reversível pro Basic Auth.
+model User {
+  id           String  @id @default(uuid())
+  username     String  @unique
+  displayName  String
+  passwordHash String // scrypt, formato "salt:hash"
+  isAdmin      Boolean @default(false)
+
+  // Conta criada por um admin nasce com senha provisória, combinada por fora
+  // (chat/e-mail). Até o dono trocar, a plataforma cobra a troca no primeiro acesso.
+  mustChangePassword Boolean @default(false)
+
+  jiraUser        String?
+  jiraPasswordEnc String?
+
+  cards           Card[]
+  dismissedIssues DismissedIssue[]
+  history         History[]
+
+  createdAt DateTime @default(now())
+}
+
+// Aviso de "chamado atribuído a você" que o dev dispensou. Por usuário e
+// persistido — antes era um Set em memória, global e perdido a cada restart.
+model DismissedIssue {
+  id      String   @id @default(uuid())
+  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId  String
+  jiraKey String
+  at      DateTime @default(now())
+
+  @@unique([userId, jiraKey])
+}
+
 model Card {
   id         String @id @default(uuid())
   jiraKey    String
@@ -33,8 +70,21 @@ model Card {
   proposal      Json?
   traceAnalysis Json? // TraceFileAnalysis[] — diagnóstico do microserviço app_trace
 
+  // false = a análise rodou sem contexto de código (pb-insight fora do ar).
+  // Sem isso, uma análise sem grounding parece tão confiante quanto uma com.
+  grounded Boolean @default(true)
+
+  // O que o dev REALMENTE aplicou. Pode divergir do diff proposto pela IA —
+  // é este texto que vai pra base de conhecimento do pb-insight no RESOLVIDO,
+  // senão a base aprende a solução errada e piora com o tempo.
+  resolutionText String?
+
+  createdBy   User?   @relation(fields: [createdById], references: [id])
+  createdById String?
+
   history History[]
   runs    Run[]
+  jobs    Job[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -43,20 +93,53 @@ model Card {
 }
 
 model History {
-  id     String   @id @default(uuid())
-  card   Card     @relation(fields: [cardId], references: [id], onDelete: Cascade)
+  id     String @id @default(uuid())
+  card   Card   @relation(fields: [cardId], references: [id], onDelete: Cascade)
   cardId String
   from   Stage
   to     Stage
   by     String // 'IA' | 'DEV'
-  note   String?
-  at     DateTime @default(now())
+
+  // QUAL dev — sem isto o histórico só dizia "um dev rejeitou o diff", que é
+  // rastreabilidade inútil num time. Null quando a transição foi da IA, ou em
+  // cards anteriores a este campo.
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+  userId String?
+
+  note String?
+  at   DateTime @default(now())
+}
+
+// Fila de processamento. O pipeline de IA saiu de dentro do request HTTP:
+// POST /cards enfileira e responde na hora, um worker in-process consome.
+// Resolve também o card zumbi — job RUNNING órfão (processo morreu no meio)
+// volta pra PENDING no startup, em vez do card ficar preso para sempre.
+enum JobStatus {
+  PENDING
+  RUNNING
+  DONE
+  FAILED
+}
+
+model Job {
+  id        String    @id @default(uuid())
+  card      Card      @relation(fields: [cardId], references: [id], onDelete: Cascade)
+  cardId    String
+  status    JobStatus @default(PENDING)
+  attempts  Int       @default(0)
+  lastError String?
+  payload   Json? // TraceProviderOverride, quando o dev usou chave pessoal
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status, createdAt])
 }
 
 // Configuração da plataforma — linha única (id sempre 1), editável pela tela
-// de Configurações. Substitui o .env pra tudo que não é bootstrap: DATABASE_URL
-// e PORT continuam no .env porque o processo precisa deles antes de conseguir
-// falar com o banco.
+// de Configurações. Substitui o .env pra tudo que não é bootstrap: DATABASE_URL,
+// PORT e ENCRYPTION_KEY continuam no .env porque o processo precisa deles antes
+// de conseguir falar com o banco / decifrar qualquer coisa.
 model PlatformSettings {
   id Int @id @default(1)
 
@@ -69,9 +152,8 @@ model PlatformSettings {
 
   traceServiceUrl String @default("http://localhost:8070")
 
+  // jiraUser/jiraPassword saíram daqui: agora são por usuário (ver model User).
   jiraBaseUrl     String?
-  jiraUser        String?
-  jiraPassword    String?
   jiraAssignedJql String  @default("assignee = currentUser() AND resolution = Unresolved ORDER BY created DESC")
 
   pbInsightUrl String @default("http://127.0.0.1:4500")
@@ -80,14 +162,21 @@ model PlatformSettings {
 }
 
 // Registro de cada chamada à API — base pra controle de custo e auditoria.
+// É o que sustenta a decisão de arquitetura "o token vive só no backend":
+// sem isto preenchido, não existe auditoria de consumo nenhuma.
 model Run {
   id           String   @id @default(uuid())
   card         Card     @relation(fields: [cardId], references: [id], onDelete: Cascade)
   cardId       String
   stage        Stage
+  provider     String // 'anthropic' | 'openai'
   model        String
   inputTokens  Int
   outputTokens Int
+  costUsd      Float    @default(0)
   ok           Boolean
+  errorMessage String?
   at           DateTime @default(now())
+
+  @@index([at])
 }

@@ -1,0 +1,14 @@
+# node_modules do host tem binários compilados pra outra plataforma.
+node_modules
+
+# .data é o índice do codebase (~130MB): vem de volume Docker, gerado pelo
+# `npm run ingest`. Copiar pra imagem a deixaria enorme e desatualizada.
+.data
+
+.env
+.env.*
+!.example.env
+
+*.log
+.serve-log.txt
+.git

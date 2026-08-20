@@ -1,3 +1,7 @@
+// PRIMEIRO import: em ESM os módulos são avaliados na ordem em que aparecem,
+// e o shared.js lê PB_INSIGHT_WS_ROOT no topo. Um `loadEnv()` no corpo do
+// arquivo rodaria tarde demais — o shared já teria resolvido o caminho.
+import "dotenv/config";
 import { copyFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { IngestCodebaseVersionUseCase } from "../../application/use-cases/ingest-codebase-version/ingest-codebase-version.use-case.js";

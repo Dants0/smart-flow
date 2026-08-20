@@ -1,11 +1,16 @@
 import type { CardImage, CardTraceFile } from '../domain/card';
-import { getSettings, type PlatformSettings } from './settingsRepository';
+import { getSettings } from './settingsRepository';
+import { getJiraCredentials, type JiraCredentials } from './userRepository';
 
 /**
  * Cliente do Jira Server/Data Center (REST API v2 — v3/ADF é só Cloud).
  * Essa instância (v8.0.2) é anterior a Personal Access Tokens (chegaram na 8.14),
- * então a autenticação é Basic Auth com usuário + senha reais — configurados na
- * tela de Configurações (nunca no navegador).
+ * então a autenticação é Basic Auth com usuário + senha reais.
+ *
+ * As credenciais são POR USUÁRIO (guardadas cifradas em User.jiraPasswordEnc):
+ * `assignee = currentUser()` só faz sentido se cada dev autenticar com a conta
+ * dele — com uma conta única no sistema, todo mundo veria os chamados da mesma
+ * pessoa. A URL base segue global (é a mesma instância pra todos).
  */
 const IMAGE_MIME_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
@@ -34,16 +39,13 @@ interface JiraIssueResponse {
   };
 }
 
-function authHeader(settings: PlatformSettings): string {
-  if (!settings.jiraUser || !settings.jiraPassword) {
-    throw new Error('Usuário/senha do Jira não configurados — veja Configurações > Jira.');
-  }
-  return 'Basic ' + Buffer.from(`${settings.jiraUser}:${settings.jiraPassword}`).toString('base64');
+function authHeader(creds: JiraCredentials): string {
+  return 'Basic ' + Buffer.from(`${creds.user}:${creds.password}`).toString('base64');
 }
 
-async function jiraFetch(url: string, settings: PlatformSettings): Promise<Response> {
+export async function jiraFetch(url: string, creds: JiraCredentials): Promise<Response> {
   const resp = await fetch(url, {
-    headers: { Authorization: authHeader(settings), Accept: 'application/json' },
+    headers: { Authorization: authHeader(creds), Accept: 'application/json' },
   });
 
   // Jira Server bloqueia Basic Auth com CAPTCHA depois de N logins falhos —
@@ -58,24 +60,30 @@ async function jiraFetch(url: string, settings: PlatformSettings): Promise<Respo
   return resp;
 }
 
-async function downloadAttachment(url: string, settings: PlatformSettings): Promise<Buffer> {
-  const resp = await jiraFetch(url, settings);
+/** Resolve a URL base + credenciais do usuário, com erros que dizem o que fazer. */
+async function jiraContext(userId: string): Promise<{ baseUrl: string; creds: JiraCredentials }> {
+  const [settings, creds] = await Promise.all([getSettings(), getJiraCredentials(userId)]);
+  if (!settings.jiraBaseUrl) {
+    throw new Error('URL do Jira não configurada — veja Configurações > Jira.');
+  }
+  if (!creds) {
+    throw new Error('Suas credenciais do Jira não estão configuradas — veja Configurações > Conta.');
+  }
+  return { baseUrl: settings.jiraBaseUrl, creds };
+}
+
+async function downloadAttachment(url: string, creds: JiraCredentials): Promise<Buffer> {
+  const resp = await jiraFetch(url, creds);
   if (!resp.ok) {
     throw new Error(`falha ao baixar anexo do Jira (status ${resp.status})`);
   }
   return Buffer.from(await resp.arrayBuffer());
 }
 
-export async function fetchJiraIssue(key: string): Promise<JiraIssuePreview> {
-  const settings = await getSettings();
-  if (!settings.jiraBaseUrl) {
-    throw new Error('URL do Jira não configurada — veja Configurações > Jira.');
-  }
+export async function fetchJiraIssue(userId: string, key: string): Promise<JiraIssuePreview> {
+  const { baseUrl, creds } = await jiraContext(userId);
 
-  const resp = await jiraFetch(
-    `${settings.jiraBaseUrl}/rest/api/2/issue/${encodeURIComponent(key)}`,
-    settings,
-  );
+  const resp = await jiraFetch(`${baseUrl}/rest/api/2/issue/${encodeURIComponent(key)}`, creds);
 
   if (resp.status === 404) {
     throw new Error(`Chamado ${key} não encontrado no Jira`);
@@ -98,14 +106,14 @@ export async function fetchJiraIssue(key: string): Promise<JiraIssuePreview> {
       att.size <= MAX_IMAGE_BYTES &&
       images.length < MAX_IMAGES
     ) {
-      const buf = await downloadAttachment(att.content, settings);
+      const buf = await downloadAttachment(att.content, creds);
       images.push({ name: att.filename, mediaType: att.mimeType, data: buf.toString('base64') });
     } else if (
       (att.mimeType.startsWith('text/') || /\.(log|txt|trc)$/i.test(att.filename)) &&
       att.size <= MAX_TRACE_BYTES &&
       traceFiles.length < MAX_TRACE_FILES
     ) {
-      const buf = await downloadAttachment(att.content, settings);
+      const buf = await downloadAttachment(att.content, creds);
       traceFiles.push({ name: att.filename, content: buf.toString('utf-8') });
     }
   }
@@ -122,15 +130,12 @@ interface JiraSearchResponse {
   issues: { key: string; fields: { summary: string } }[];
 }
 
-/** Chamados abertos atribuídos ao usuário autenticado — pra avisar o dev, nunca cria card sozinho. */
-export async function searchAssignedIssues(): Promise<AssignedIssue[]> {
-  const settings = await getSettings();
-  if (!settings.jiraBaseUrl) {
-    throw new Error('URL do Jira não configurada — veja Configurações > Jira.');
-  }
+/** Chamados abertos atribuídos AO USUÁRIO autenticado — só avisa, nunca cria card. */
+export async function searchAssignedIssues(userId: string): Promise<AssignedIssue[]> {
+  const [{ baseUrl, creds }, settings] = await Promise.all([jiraContext(userId), getSettings()]);
 
-  const url = `${settings.jiraBaseUrl}/rest/api/2/search?jql=${encodeURIComponent(settings.jiraAssignedJql)}&fields=summary&maxResults=20`;
-  const resp = await jiraFetch(url, settings);
+  const url = `${baseUrl}/rest/api/2/search?jql=${encodeURIComponent(settings.jiraAssignedJql)}&fields=summary&maxResults=20`;
+  const resp = await jiraFetch(url, creds);
 
   if (!resp.ok) {
     throw new Error(`Jira respondeu ${resp.status}: ${await resp.text()}`);

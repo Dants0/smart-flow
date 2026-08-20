@@ -2,35 +2,64 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { LuPlus, LuLoaderCircle, LuWorkflow, LuKeyRound, LuBellRing, LuX, LuSettings } from "react-icons/lu";
+import {
+  LuPlus,
+  LuLoaderCircle,
+  LuWorkflow,
+  LuKeyRound,
+  LuBellRing,
+  LuX,
+  LuSettings,
+  LuLogOut,
+} from "react-icons/lu";
 import { SiJira } from "react-icons/si";
 import {
   listCards,
+  listModules,
+  getCard,
   fetchPendingJiraIssues,
   dismissPendingJiraIssue,
   type PendingJiraIssue,
+  type CardSummary,
+  type CardFilters,
 } from "@/lib/api";
 import type { Card } from "@/lib/types";
 import { STAGES } from "@/lib/types";
 import { loadTraceProviderSettings, type TraceProviderSettings } from "@/lib/settings";
 import { BoardColumn } from "@/components/BoardColumn";
+import { BoardFilters } from "@/components/BoardFilters";
 import { NewCardModal } from "@/components/NewCardModal";
 import { CardDetail } from "@/components/CardDetail";
 import { SettingsModal } from "@/components/SettingsModal";
+import { ThemeToggle } from "@/components/ThemeToggle";
+import { AuthGuard } from "@/components/AuthGuard";
+import { SetupBanner } from "@/components/SetupBanner";
+import { clearToken, type AuthUser } from "@/lib/auth";
 
 const POLL_MS = 5000;
 const PENDING_POLL_MS = 60000;
+const SEARCH_DEBOUNCE_MS = 350;
 
 export default function Home() {
-  const [cards, setCards] = useState<Card[]>([]);
+  return <AuthGuard>{(user) => <Board user={user} />}</AuthGuard>;
+}
+
+function Board({ user }: { user: AuthUser }) {
+  const [cards, setCards] = useState<CardSummary[]>([]);
+  const [modules, setModules] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showNew, setShowNew] = useState(false);
   const [newCardInitialKey, setNewCardInitialKey] = useState<string | undefined>(undefined);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedCard, setSelectedCard] = useState<Card | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [traceSettings, setTraceSettings] = useState<TraceProviderSettings | null>(null);
   const [pending, setPending] = useState<PendingJiraIssue[]>([]);
+
+  // `filters` muda a cada tecla; `applied` é o que de fato vai pro servidor.
+  const [filters, setFilters] = useState<CardFilters>({ resolvedWithinDays: 7 });
+  const [applied, setApplied] = useState<CardFilters>({ resolvedWithinDays: 7 });
 
   function openNewCard(jiraKey?: string) {
     setNewCardInitialKey(jiraKey);
@@ -38,73 +67,85 @@ export default function Home() {
   }
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- localStorage só existe no client; lido após montar pra não divergir da renderização estática do server
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- localStorage só existe no client
     setTraceSettings(loadTraceProviderSettings());
+    listModules().then(setModules).catch(() => {});
   }, []);
+
+  // Debounce da busca: sem isso cada tecla vira uma query no Postgres.
+  useEffect(() => {
+    const id = setTimeout(() => setApplied(filters), SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(id);
+  }, [filters]);
 
   const refresh = useCallback(async () => {
     try {
-      const data = await listCards();
-      setCards(data);
+      setCards(await listCards(applied));
       setError(null);
     } catch (err) {
-      setError(
-        err instanceof Error
-          ? err.message
-          : "não foi possível falar com a API",
-      );
+      setError(err instanceof Error ? err.message : "não foi possível falar com a API");
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [applied]);
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch-on-mount + polling, sem external store pra subscrever
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch-on-mount + polling
     refresh();
     const id = setInterval(refresh, POLL_MS);
     return () => clearInterval(id);
   }, [refresh]);
 
+  // O board só carrega o resumo; o card completo (anexos, diff, histórico) vem
+  // sob demanda ao abrir o painel — é o que mantém o polling barato.
+  useEffect(() => {
+    if (!selectedId) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- limpa o detalhe ao fechar o painel
+      setSelectedCard(null);
+      return;
+    }
+    let cancelled = false;
+    getCard(selectedId)
+      .then((card) => {
+        if (!cancelled) setSelectedCard(card);
+      })
+      .catch(() => {
+        if (!cancelled) setSelectedId(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedId]);
+
   const refreshPending = useCallback(async () => {
     try {
-      const data = await fetchPendingJiraIssues();
-      setPending(data);
+      setPending(await fetchPendingJiraIssues());
     } catch {
-      // silencioso: aviso é um bônus, não deve poluir o banner de erro principal
+      // Jira fora do ar é ruído; falta de credencial já aparece no SetupBanner.
+      setPending([]);
     }
   }, []);
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch-on-mount + polling, mesma justificativa do refresh() de cards acima
+    if (user.setupPending.includes("jira")) return; // sem credencial, nem tenta
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch-on-mount + polling
     refreshPending();
     const id = setInterval(refreshPending, PENDING_POLL_MS);
     return () => clearInterval(id);
-  }, [refreshPending]);
+  }, [refreshPending, user.setupPending]);
 
   async function handleDismissPending(key: string) {
     setPending((prev) => prev.filter((p) => p.key !== key));
     try {
       await dismissPendingJiraIssue(key);
     } catch {
-      // se falhar, o próximo poll (60s) só traz ele de volta — sem drama
+      // se falhar, o próximo poll traz de volta — sem drama
     }
   }
 
-  function upsertCard(card: Card) {
-    setCards((prev) => {
-      const idx = prev.findIndex((c) => c.id === card.id);
-      if (idx === -1) return [card, ...prev];
-      const next = [...prev];
-      next[idx] = card;
-      return next;
-    });
-  }
-
-  const selected = cards.find((c) => c.id === selectedId) ?? null;
-  const visibleStages =
-    cards.some((c) => c.stage === "ERRO")
-      ? STAGES
-      : STAGES.filter((s) => s !== "ERRO");
+  const visibleStages = cards.some((c) => c.stage === "ERRO")
+    ? STAGES
+    : STAGES.filter((s) => s !== "ERRO");
 
   return (
     <div className="flex h-full flex-col bg-zinc-50 dark:bg-black">
@@ -114,14 +155,15 @@ export default function Home() {
           <h1 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
             SMART AI Flow
           </h1>
-          <p className="text-xs text-zinc-400">
-            Esteira de IA para chamados do SMART
-          </p>
+          <p className="text-xs text-zinc-400">{user.displayName}</p>
+        </div>
+        <div className="ml-auto">
+          <ThemeToggle />
         </div>
         <Link
           href="/settings"
-          className="ml-auto flex items-center gap-1.5 rounded-md border border-zinc-300 px-3 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
-          title="Configurações da plataforma (Jira, IA, serviços)"
+          className="flex items-center gap-1.5 rounded-md border border-zinc-300 px-3 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+          title="Configurações da plataforma"
         >
           <LuSettings className="size-4" />
         </Link>
@@ -135,9 +177,7 @@ export default function Home() {
           }
         >
           <LuKeyRound className="size-4" />
-          {traceSettings && (
-            <span className="size-1.5 rounded-full bg-emerald-500" />
-          )}
+          {traceSettings && <span className="size-1.5 rounded-full bg-emerald-500" />}
         </button>
         <button
           onClick={() => openNewCard()}
@@ -146,11 +186,25 @@ export default function Home() {
           <LuPlus className="size-4" />
           Novo card
         </button>
+        <button
+          onClick={() => {
+            clearToken();
+            // hard reload: descarta cards e settings já carregados da sessão anterior
+            // eslint-disable-next-line @next/next/no-location-assign-relative-destination
+            window.location.href = "/login";
+          }}
+          title="Sair"
+          className="rounded-md border border-zinc-300 p-2 text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-800 dark:border-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+        >
+          <LuLogOut className="size-4" />
+        </button>
       </header>
+
+      <SetupBanner user={user} />
 
       {error && (
         <div className="border-b border-red-200 bg-red-50 px-6 py-2 text-xs text-red-600 dark:border-red-900 dark:bg-red-950/50 dark:text-red-300">
-          {error} — a API está rodando em localhost:3333?
+          {error} — a API está rodando?
         </div>
       )}
 
@@ -195,6 +249,8 @@ export default function Home() {
         </div>
       )}
 
+      <BoardFilters filters={filters} modules={modules} onChange={setFilters} />
+
       <main className="flex flex-1 gap-4 overflow-x-auto p-6">
         {loading ? (
           <div className="flex flex-1 items-center justify-center text-zinc-400">
@@ -216,19 +272,22 @@ export default function Home() {
         <NewCardModal
           initialJiraKey={newCardInitialKey}
           onClose={() => setShowNew(false)}
-          onCreated={upsertCard}
+          onCreated={() => refresh()}
           onError={(msg) => setError(msg)}
         />
       )}
 
-      {selected && (
+      {selectedCard && (
         <CardDetail
-          card={selected}
+          card={selectedCard}
           onClose={() => setSelectedId(null)}
-          onUpdated={upsertCard}
-          onDeleted={(id) => {
-            setCards((prev) => prev.filter((c) => c.id !== id));
+          onUpdated={(card) => {
+            setSelectedCard(card);
+            refresh();
+          }}
+          onDeleted={() => {
             setSelectedId(null);
+            refresh();
           }}
         />
       )}

@@ -3,6 +3,12 @@ import { retrieveContext } from '../infra/pbInsight';
 import { loadModuleContext } from '../infra/moduleContext';
 import { ProposerOutputSchema, parseAgentOutput, type ProposerOutput } from './contracts';
 import type { Card } from '../domain/card';
+import type { LlmResult } from '../infra/llm';
+
+export interface ProposalResult {
+  output: ProposerOutput;
+  usage: LlmResult;
+}
 
 const SYSTEM = `Você é um desenvolvedor sênior de PowerBuilder/PFC no sistema SMART.
 A causa raiz já foi levantada. Sua tarefa é propor a correção como um DIFF
@@ -22,13 +28,13 @@ Regras:
 - No diff, use caminhos de arquivo reais do módulo.
 - Em risks, liste efeitos colaterais (Oracle vs SQL Server, INI, DataWindow).`;
 
-export async function runProposal(card: Card): Promise<ProposerOutput> {
+export async function runProposal(card: Card): Promise<ProposalResult> {
   if (!card.analysis) {
     throw new Error('proposer: card sem análise prévia');
   }
 
   const moduleContext = await loadModuleContext(card.module);
-  const retrieved = await retrieveContext(card.module, card.analysis.rootCause);
+  const { text: retrieved } = await retrieveContext(card.module, card.analysis.rootCause);
 
   const userPrompt = [
     `# Chamado ${card.jiraKey}`,
@@ -44,11 +50,11 @@ export async function runProposal(card: Card): Promise<ProposerOutput> {
     retrieved,
   ].join('\n');
 
-  const text = await callLlm({
+  const result = await callLlm({
     system: SYSTEM,
     userText: userPrompt,
     maxTokens: 4000,
   });
 
-  return parseAgentOutput(ProposerOutputSchema, text);
+  return { output: parseAgentOutput(ProposerOutputSchema, result.text), usage: result };
 }

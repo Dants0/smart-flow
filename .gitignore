@@ -1,3 +1,6 @@
 .DS_Store
 Thumbs.db
 *.swp
+
+# Segredos desta instalação — gerados pelo setup, únicos por máquina.
+.env

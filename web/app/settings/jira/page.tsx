@@ -2,8 +2,9 @@
 
 import { useEffect, useState } from "react";
 import { LuLoaderCircle } from "react-icons/lu";
+import { SiJira } from "react-icons/si";
 import { getSettings, updateSettings, type PlatformSettingsPatch } from "@/lib/api";
-import { TextField, SaveBar } from "@/components/settings/fields";
+import { TextField, SaveBar, SettingsSection } from "@/components/settings/fields";
 
 export default function JiraSettingsPage() {
   const [loading, setLoading] = useState(true);
@@ -12,17 +13,12 @@ export default function JiraSettingsPage() {
   const [error, setError] = useState<string | null>(null);
 
   const [baseUrl, setBaseUrl] = useState("");
-  const [user, setUser] = useState("");
-  const [password, setPassword] = useState("");
-  const [passwordSet, setPasswordSet] = useState(false);
   const [jql, setJql] = useState("");
 
   useEffect(() => {
     getSettings()
       .then((s) => {
         setBaseUrl(s.jiraBaseUrl ?? "");
-        setUser(s.jiraUser ?? "");
-        setPasswordSet(s.jiraPasswordSet);
         setJql(s.jiraAssignedJql);
       })
       .catch((err) => setError(err instanceof Error ? err.message : "falha ao carregar"))
@@ -34,16 +30,8 @@ export default function JiraSettingsPage() {
     setSaved(false);
     setError(null);
     try {
-      const patch: PlatformSettingsPatch = {
-        jiraBaseUrl: baseUrl,
-        jiraUser: user,
-        jiraAssignedJql: jql,
-      };
-      if (password.trim()) patch.jiraPassword = password.trim();
-
-      const updated = await updateSettings(patch);
-      setPasswordSet(updated.jiraPasswordSet);
-      setPassword("");
+      const patch: PlatformSettingsPatch = { jiraBaseUrl: baseUrl, jiraAssignedJql: jql };
+      await updateSettings(patch);
       setSaved(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : "falha ao salvar");
@@ -62,37 +50,26 @@ export default function JiraSettingsPage() {
   }
 
   return (
-    <div className="flex flex-col gap-4">
-      <div>
-        <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Jira</h2>
-        <p className="mt-0.5 text-xs text-zinc-400">
-          Server/Data Center via Basic Auth — essa instância é anterior a Personal
-          Access Tokens. Usado pra buscar chamados e detectar os atribuídos a você.
-        </p>
-      </div>
-
+    <SettingsSection
+      icon={SiJira}
+      title="Jira"
+      description="Configuração da instância, compartilhada por todos. As credenciais são pessoais e ficam em Minha conta — é o que faz currentUser() resolver pro dev certo."
+    >
       <TextField
-        label="URL base"
+        label="URL base da instância"
         value={baseUrl}
         onChange={setBaseUrl}
         placeholder="https://seu-jira.exemplo.com"
-      />
-      <TextField label="Usuário" value={user} onChange={setUser} placeholder="seu.usuario" />
-      <TextField
-        label="Senha"
-        type="password"
-        value={password}
-        onChange={setPassword}
-        placeholder={passwordSet ? "•••••••• (já configurada — deixe em branco pra manter)" : "sua senha"}
+        hint="Jira Server/Data Center. Esta versão é anterior a Personal Access Tokens, por isso Basic Auth."
       />
       <TextField
         label="JQL de chamados atribuídos"
         value={jql}
         onChange={setJql}
-        hint="Usado pra detectar chamados novos atribuídos a você (aviso no board, nunca cria card sozinho)"
+        hint="Roda com as credenciais de cada usuário, então currentUser() resolve pra quem estiver logado. Só gera aviso no board — nunca cria card sozinho."
       />
 
       <SaveBar saving={saving} saved={saved} error={error} onSave={handleSave} />
-    </div>
+    </SettingsSection>
   );
 }

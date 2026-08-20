@@ -3,6 +3,14 @@ import { retrieveContext } from '../infra/pbInsight';
 import { loadModuleContext } from '../infra/moduleContext';
 import { AnalyzerOutputSchema, parseAgentOutput, type AnalyzerOutput } from './contracts';
 import type { Card } from '../domain/card';
+import type { LlmResult } from '../infra/llm';
+
+export interface AnalysisResult {
+  output: AnalyzerOutput;
+  usage: LlmResult;
+  /** false = rodou sem trecho real de código no prompt (ver pbInsight.ts) */
+  grounded: boolean;
+}
 
 const SYSTEM = `Você é um desenvolvedor sênior de PowerBuilder/PFC no sistema SMART.
 Sua tarefa é analisar o chamado e levantar a CAUSA RAIZ, não propor código ainda.
@@ -21,9 +29,9 @@ Regras:
 - Aponte objetos concretos do codebase (windows, datawindows, NVOs, procedures).
 - Considere diferenças entre ambientes Oracle e SQL Server quando relevante.`;
 
-export async function runAnalysis(card: Card): Promise<AnalyzerOutput> {
+export async function runAnalysis(card: Card): Promise<AnalysisResult> {
   const moduleContext = await loadModuleContext(card.module); // CLAUDE.md do módulo
-  const retrieved = await retrieveContext(card.module, card.rawTicket); // RAG do PB Insight
+  const { text: retrieved, grounded } = await retrieveContext(card.module, card.rawTicket); // RAG do PB Insight
 
   const traceSection = card.traceAnalysis?.length
     ? [
@@ -51,12 +59,16 @@ export async function runAnalysis(card: Card): Promise<AnalyzerOutput> {
     retrieved,
   ].join('\n');
 
-  const text = await callLlm({
+  const result = await callLlm({
     system: SYSTEM,
     userText: userPrompt,
     images: card.images,
     maxTokens: 2000,
   });
 
-  return parseAgentOutput(AnalyzerOutputSchema, text);
+  return {
+    output: parseAgentOutput(AnalyzerOutputSchema, result.text),
+    usage: result,
+    grounded,
+  };
 }
