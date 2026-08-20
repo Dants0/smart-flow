@@ -28,6 +28,9 @@ Responda SOMENTE com um objeto JSON válido, sem markdown, neste formato:
 Regras:
 - Mudança cirúrgica. Não reescreva objetos inteiros.
 - No diff, use caminhos de arquivo reais do módulo.
+- Só altere FONTES EXPORTADOS: .sru, .sra, .srd, .srw. Nunca proponha mudança em
+  .pbl, .pbw ou .pbd — são artefatos de build, não entram em commit, e a
+  plataforma recusa o diff se você tocar num deles.
 - Em risks, liste efeitos colaterais (Oracle vs SQL Server, INI, DataWindow).`;
 
 export async function runProposal(card: Card): Promise<ProposalResult> {

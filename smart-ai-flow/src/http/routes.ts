@@ -1,9 +1,12 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { createCard } from '../domain/card';
+import { createCard, moveCard } from '../domain/card';
+import { Stage } from '../domain/stages';
+import { buildJiraComment } from '../domain/jiraComment';
 import { resolve, requestNewProposal, retryFromError } from '../orchestrator/orchestrator';
 import {
+  addJiraComment,
   fetchJiraIssue,
   searchAssignedIssues,
   testJiraConnection,
@@ -25,9 +28,27 @@ import { enqueueAdvance, queueStats } from '../infra/jobQueue';
 import { usageSummary } from '../infra/runRepository';
 import { applyDiff, revertDiff, WorkspaceError } from '../infra/workspace';
 import {
+  branchForTicket,
+  commitFiles,
+  commitMessage,
+  parseBitbucketRepo,
+  previewCommit,
+  pushBranch,
+  remoteUrl,
+  GitError,
+} from '../infra/git';
+import {
+  checkRepositoryAccess,
+  createPullRequest,
+  findOpenPullRequest,
+  BitbucketError,
+} from '../infra/bitbucket';
+import {
   authenticate,
   clearJiraAuthBlock,
   countUsers,
+  getBitbucketCredentials,
+  getGitIdentity,
   createUser,
   deleteUser,
   dismissIssue,
@@ -37,8 +58,10 @@ import {
   updateUser,
 } from '../infra/userRepository';
 import {
+  CommitCardSchema,
   CreateCardSchema,
   CreateUserSchema,
+  JiraCommentSchema,
   LoginSchema,
   RejectCardSchema,
   ResolveCardSchema,
@@ -243,7 +266,7 @@ export async function routes(app: FastifyInstance) {
     /**
      * REVISAO: o dev aceitou a proposta e manda a IA escrever o diff no working
      * copy. Só aqui o backend deixa de ser só-leitura, e só por ação humana.
-     * Não commita nada: a mudança aparece como alteração local no SVN do dev.
+     * Não commita nada: a mudança aparece como alteração local no working copy do dev.
      */
     secured.post('/cards/:id/apply', async (req, reply) => {
       const card = await findCardById((req.params as { id: string }).id);
@@ -318,6 +341,193 @@ export async function routes(app: FastifyInstance) {
         if (err instanceof WorkspaceError) return reply.code(422).send({ error: err.message });
         throw err;
       }
+    });
+
+    // ---- Versionamento (commit, push, PR, comentário no Jira) -----------
+
+    /**
+     * Retrato do que aconteceria no commit, sem executar nada. É o que a tela
+     * mostra antes do primeiro clique — a alternativa é o dev "ir aceitando"
+     * sem saber o que sobe, que é exatamente o que essa etapa evita.
+     */
+    secured.get('/cards/:id/versioning', async (req, reply) => {
+      const card = await findCardById((req.params as { id: string }).id);
+      if (!card) return reply.code(404).send({ error: 'não encontrado' });
+      if (!card.appliedFiles?.length) {
+        return reply.code(400).send({ error: 'o diff ainda não foi aplicado neste card' });
+      }
+
+      try {
+        return await previewCommit(card.jiraKey, card.appliedFiles);
+      } catch (err) {
+        if (err instanceof GitError) return reply.code(422).send({ error: err.message });
+        throw err;
+      }
+    });
+
+    /** Commita os arquivos que o dev confirmou e move o card pra VERSIONAMENTO. */
+    secured.post('/cards/:id/commit', async (req, reply) => {
+      const body = parseBody(CommitCardSchema, req, reply);
+      if (!body) return;
+
+      const userId = currentUserId(req);
+      const [card, identity] = await Promise.all([
+        findCardById((req.params as { id: string }).id),
+        getGitIdentity(userId),
+      ]);
+      if (!card) return reply.code(404).send({ error: 'não encontrado' });
+      if (card.stage !== 'REVISAO') {
+        return reply.code(400).send({ error: 'só dá pra versionar a partir de REVISAO' });
+      }
+      if (!identity) {
+        return reply.code(428).send({
+          code: 'GIT_IDENTITY_MISSING',
+          error: 'configure seu nome e e-mail de commit em Configurações > Minha conta',
+        });
+      }
+
+      try {
+        const message = body.message?.trim() || commitMessage(card.jiraKey, card.proposal?.summary);
+        const { hash } = await commitFiles({
+          jiraKey: card.jiraKey,
+          files: body.files,
+          message,
+          authorName: identity.name,
+          authorEmail: identity.email,
+        });
+
+        const versioned = moveCard(
+          { ...card, branch: branchForTicket(card.jiraKey), commitHash: hash, committedFiles: body.files },
+          Stage.VERSIONAMENTO,
+          'DEV',
+          `commit ${hash.slice(0, 8)} · ${body.files.length} arquivo(s) · ${message}`,
+          userId,
+        );
+        await saveCard(versioned);
+        return versioned;
+      } catch (err) {
+        if (err instanceof GitError) return reply.code(422).send({ error: err.message });
+        throw err;
+      }
+    });
+
+    /** Push da branch + abertura do PR. Reaproveita PR já aberto pra não duplicar. */
+    secured.post('/cards/:id/pull-request', async (req, reply) => {
+      const userId = currentUserId(req);
+      const [card, creds] = await Promise.all([
+        findCardById((req.params as { id: string }).id),
+        getBitbucketCredentials(userId),
+      ]);
+      if (!card) return reply.code(404).send({ error: 'não encontrado' });
+      if (!card.commitHash) return reply.code(400).send({ error: 'não há commit para publicar' });
+      if (!creds) {
+        return reply.code(428).send({
+          code: 'BITBUCKET_NOT_CONFIGURED',
+          error: 'configure seu usuário e app password do Bitbucket em Configurações > Minha conta',
+        });
+      }
+
+      const branch = card.branch ?? branchForTicket(card.jiraKey);
+
+      try {
+        await pushBranch(branch, creds);
+
+        const repo = parseBitbucketRepo(await remoteUrl());
+        if (!repo) {
+          return reply
+            .code(422)
+            .send({ error: 'o origin não parece ser um repositório do Bitbucket Cloud' });
+        }
+
+        const existing = await findOpenPullRequest(repo.workspace, repo.repo, branch, creds);
+        const pr =
+          existing ??
+          (await createPullRequest(
+            {
+              ...repo,
+              title: `${card.jiraKey} ${card.proposal?.summary ?? ''}`.trim(),
+              description: card.proposal?.rationale ?? '',
+              sourceBranch: branch,
+              destinationBranch: 'main',
+            },
+            creds,
+          ));
+
+        const withPr = {
+          ...card,
+          branch,
+          prUrl: pr.url,
+          history: [
+            ...card.history,
+            {
+              from: card.stage,
+              to: card.stage,
+              by: 'DEV' as const,
+              userId,
+              at: new Date().toISOString(),
+              note: existing ? `PR já aberto: ${pr.url}` : `PR aberto: ${pr.url}`,
+            },
+          ],
+        };
+        await saveCard(withPr);
+        return withPr;
+      } catch (err) {
+        if (err instanceof GitError || err instanceof BitbucketError) {
+          return reply.code(422).send({ error: err.message });
+        }
+        throw err;
+      }
+    });
+
+    /** Rascunho do comentário de entrega — o dev edita antes de publicar. */
+    secured.get('/cards/:id/jira-comment', async (req, reply) => {
+      const card = await findCardById((req.params as { id: string }).id);
+      if (!card) return reply.code(404).send({ error: 'não encontrado' });
+      return {
+        body: buildJiraComment({
+          card,
+          files: card.committedFiles ?? card.appliedFiles ?? [],
+          prUrl: card.prUrl,
+        }),
+      };
+    });
+
+    /** Publica o comentário no chamado. Só o texto que veio da tela é enviado. */
+    secured.post('/cards/:id/jira-comment', async (req, reply) => {
+      const body = parseBody(JiraCommentSchema, req, reply);
+      if (!body) return;
+
+      const card = await findCardById((req.params as { id: string }).id);
+      if (!card) return reply.code(404).send({ error: 'não encontrado' });
+
+      try {
+        await addJiraComment(currentUserId(req), card.jiraKey, body.body);
+      } catch (err) {
+        if (err instanceof JiraAuthError) {
+          return reply.code(428).send({ code: 'JIRA_AUTH_BLOCKED', error: err.message });
+        }
+        return reply
+          .code(502)
+          .send({ error: err instanceof Error ? err.message : 'falha ao comentar no Jira' });
+      }
+
+      const commented = {
+        ...card,
+        jiraCommentAt: new Date().toISOString(),
+        history: [
+          ...card.history,
+          {
+            from: card.stage,
+            to: card.stage,
+            by: 'DEV' as const,
+            userId: currentUserId(req),
+            at: new Date().toISOString(),
+            note: 'comentário de entrega publicado no Jira',
+          },
+        ],
+      };
+      await saveCard(commented);
+      return commented;
     });
 
     secured.post('/cards/:id/retry', async (req, reply) => {
@@ -419,6 +629,28 @@ export async function routes(app: FastifyInstance) {
       }
     });
 
+    /** Testa a credencial do Bitbucket contra o repositório do origin. */
+    secured.post('/me/bitbucket/test', async (req, reply) => {
+      const creds = await getBitbucketCredentials(currentUserId(req));
+      if (!creds) {
+        return reply
+          .code(428)
+          .send({ code: 'BITBUCKET_NOT_CONFIGURED', error: 'preencha usuário e app password primeiro' });
+      }
+
+      const url = await remoteUrl().catch(() => '');
+      const repo = url ? parseBitbucketRepo(url) : null;
+      if (!repo) {
+        return reply
+          .code(422)
+          .send({ error: 'o origin do working copy não é um repositório do Bitbucket Cloud' });
+      }
+
+      const access = await checkRepositoryAccess(repo.workspace, repo.repo, creds);
+      if (!access.ok) return reply.code(422).send({ error: access.detail });
+      return access;
+    });
+
     secured.post('/me/jira/unblock', async (req) => {
       await clearJiraAuthBlock(currentUserId(req));
       return findUserById(currentUserId(req));
@@ -484,9 +716,10 @@ export async function routes(app: FastifyInstance) {
       };
     });
 
-    secured.get('/monitor', async () => {
+    secured.get('/monitor', async (req) => {
       const [resources, queue, usage] = await Promise.all([
-        checkResources(),
+        // o recurso do Bitbucket depende de QUEM olha: a credencial é por dev
+        checkResources(currentUserId(req)),
         queueStats(),
         usageSummary(30),
       ]);

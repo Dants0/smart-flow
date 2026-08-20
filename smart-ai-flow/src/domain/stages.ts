@@ -12,6 +12,7 @@ export enum Stage {
   ANALISE = 'ANALISE',
   DESENVOLVIMENTO = 'DESENVOLVIMENTO',
   REVISAO = 'REVISAO',
+  VERSIONAMENTO = 'VERSIONAMENTO', // diff aplicado: commit, push e PR na branch do chamado
   RESOLVIDO = 'RESOLVIDO',
   ERRO = 'ERRO', // estágio de exceção: análise/proposta falhou, volta pro dev
 }
@@ -24,6 +25,7 @@ export const OWNER: Record<Stage, Owner> = {
   [Stage.ANALISE]: 'IA', // IA levanta causa raiz + raciocínio
   [Stage.DESENVOLVIMENTO]: 'IA', // IA propõe o diff
   [Stage.REVISAO]: 'DEV', // dev aplica na branch, testa, ajusta
+  [Stage.VERSIONAMENTO]: 'DEV', // dev confere o que sobe, commita, abre o PR
   [Stage.RESOLVIDO]: 'DEV', // dev confirma que o cenário não ocorre mais
   [Stage.ERRO]: 'DEV',
 };
@@ -33,8 +35,11 @@ const TRANSITIONS: Record<Stage, Stage[]> = {
   [Stage.NOVO]: [Stage.ANALISE],
   [Stage.ANALISE]: [Stage.DESENVOLVIMENTO, Stage.ERRO],
   [Stage.DESENVOLVIMENTO]: [Stage.REVISAO, Stage.ERRO],
-  // dev pode aceitar (RESOLVIDO) ou pedir nova proposta (DESENVOLVIMENTO)
-  [Stage.REVISAO]: [Stage.RESOLVIDO, Stage.DESENVOLVIMENTO],
+  // dev pode versionar (VERSIONAMENTO), aceitar direto (RESOLVIDO — correção que
+  // não passa por PR) ou pedir nova proposta (DESENVOLVIMENTO)
+  [Stage.REVISAO]: [Stage.VERSIONAMENTO, Stage.RESOLVIDO, Stage.DESENVOLVIMENTO],
+  // PR aberto: fecha quando o dev confirma, ou volta pra proposta se o PR for recusado
+  [Stage.VERSIONAMENTO]: [Stage.RESOLVIDO, Stage.DESENVOLVIMENTO],
   [Stage.RESOLVIDO]: [],
   [Stage.ERRO]: [Stage.ANALISE], // reprocessa do zero
 };

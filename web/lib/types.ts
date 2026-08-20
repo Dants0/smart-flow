@@ -3,6 +3,7 @@ export type Stage =
   | "ANALISE"
   | "DESENVOLVIMENTO"
   | "REVISAO"
+  | "VERSIONAMENTO"
   | "RESOLVIDO"
   | "ERRO";
 
@@ -13,6 +14,7 @@ export const STAGES: Stage[] = [
   "ANALISE",
   "DESENVOLVIMENTO",
   "REVISAO",
+  "VERSIONAMENTO",
   "RESOLVIDO",
   "ERRO",
 ];
@@ -22,6 +24,7 @@ export const STAGE_OWNER: Record<Stage, Owner> = {
   ANALISE: "IA",
   DESENVOLVIMENTO: "IA",
   REVISAO: "DEV",
+  VERSIONAMENTO: "DEV",
   RESOLVIDO: "DEV",
   ERRO: "DEV",
 };
@@ -31,6 +34,7 @@ export const STAGE_LABEL: Record<Stage, string> = {
   ANALISE: "Análise",
   DESENVOLVIMENTO: "Desenvolvimento",
   REVISAO: "Revisão",
+  VERSIONAMENTO: "Versionamento",
   RESOLVIDO: "Resolvido",
   ERRO: "Erro",
 };
@@ -111,6 +115,12 @@ export interface Card {
   /** Arquivos alterados pelo apply, relativos à raiz do working copy. */
   appliedFiles?: string[];
   appliedBackupDir?: string;
+  /** Versionamento: o que foi de fato pro repositório e pro Jira. */
+  branch?: string;
+  commitHash?: string;
+  committedFiles?: string[];
+  prUrl?: string;
+  jiraCommentAt?: string;
   createdById?: string;
   history: HistoryEntry[];
   createdAt: string;

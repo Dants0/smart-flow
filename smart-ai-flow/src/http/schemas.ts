@@ -74,6 +74,11 @@ export const UpdateMeSchema = z.object({
   password: z.string().min(8).optional(),
   jiraUser: z.string().optional(),
   jiraPassword: z.string().optional(),
+  // Identidade e credencial de versionamento — commit e PR saem como o dev.
+  gitName: z.string().optional(),
+  gitEmail: z.string().email('e-mail inválido').or(z.literal('')).optional(),
+  bitbucketUser: z.string().optional(),
+  bitbucketAppPassword: z.string().optional(),
 });
 
 export const UpdateSettingsSchema = z.object({
@@ -97,6 +102,17 @@ export const UpdateSettingsSchema = z.object({
       `a skill passa de ${MAX_SKILL_CHARS.toLocaleString('pt-BR')} caracteres — resuma o procedimento, ela entra em todo card`,
     )
     .optional(),
+});
+
+export const CommitCardSchema = z.object({
+  // A lista vem da tela, mas o backend refaz a checagem de artefato de build:
+  // a regra não pode depender de a UI ter filtrado direito.
+  files: z.array(z.string().min(1)).min(1, 'selecione ao menos um arquivo'),
+  message: z.string().max(300).optional(),
+});
+
+export const JiraCommentSchema = z.object({
+  body: z.string().min(1, 'o comentário não pode ser vazio').max(32000),
 });
 
 /** Erro de validação com mensagem legível em vez de dump do Zod. */

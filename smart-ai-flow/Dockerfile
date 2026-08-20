@@ -5,7 +5,8 @@ WORKDIR /app
 # patch: aplica o diff da proposta no working copy (ver src/infra/workspace.ts).
 #        O GNU patch tolera deslocamento de contexto, que é o caso comum num
 #        diff gerado por LLM — git apply recusaria o mesmo diff.
-RUN apk add --no-cache openssl patch
+# git: commit/push da branch do chamado (ver src/infra/git.ts).
+RUN apk add --no-cache openssl patch git
 
 COPY package.json package-lock.json ./
 RUN npm ci

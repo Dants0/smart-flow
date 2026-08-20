@@ -29,6 +29,8 @@ solicitação, criado ao final do atendimento.
 | [2026-08-20-10](2026-08-20-10-testar-conexao-com-o-jira.md) | Botão "Testar conexão" do Jira |
 | [2026-08-20-11](2026-08-20-11-esc-e-pagina-inteira-do-card.md) | Esc fecha o painel e página inteira do card |
 | [2026-08-20-12](2026-08-20-12-abrir-card-em-nova-aba-pelo-board.md) | Abrir o card em nova aba direto do board |
+| [2026-08-20-13](2026-08-20-13-regra-de-commit-e-guarda-de-artefatos.md) | Regra de commit do SMART Desktop e guarda de artefatos |
+| [2026-08-20-14](2026-08-20-14-esteira-de-versionamento.md) | Esteira de Versionamento (commit, PR e comentário no Jira) |
 
 ## Template
 

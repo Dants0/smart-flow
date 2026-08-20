@@ -15,6 +15,11 @@ export interface AuthUser {
    * parou de tentar. Insistir rearmaria o bloqueio na conta do dev no Jira.
    */
   jiraAuthBlocked?: { at: string; reason: string };
+  /** Identidade e credencial de versionamento — commit e PR saem como o dev. */
+  gitName: string | null;
+  gitEmail: string | null;
+  bitbucketUser: string | null;
+  bitbucketAppPasswordSet: boolean;
 }
 
 const TOKEN_KEY = "smart-ai-flow:token";

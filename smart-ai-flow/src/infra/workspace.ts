@@ -17,10 +17,10 @@ const run = promisify(execFile);
  *  - `--dry-run` antes de tocar em qualquer arquivo: diff que não aplica limpo
  *    não aplica nada pela metade;
  *  - backup de cada arquivo alterado, com reversão de um clique;
- *  - **nada de controle de versão**: o backend não commita, não faz revert de
- *    SVN, não cria branch. O `svn diff`/`svn revert` do dev continua sendo a
- *    rede de proteção final, e continua funcionando porque a mudança aparece
- *    lá como alteração local dele.
+ *  - **nada de controle de versão**: o backend não commita, não cria branch e
+ *    não reverte nada no repositório. O `diff`/`checkout` do VCS do dev continua
+ *    sendo a rede de proteção final, e continua funcionando porque a mudança
+ *    aparece lá como alteração local dele.
  */
 
 /** Raiz do working copy. No compose vem montada em /smart_desktop. */
@@ -82,6 +82,35 @@ export function parseDiffTargets(diff: string, strip: number): string[] {
   }
 
   return [...new Set(targets)];
+}
+
+/**
+ * Regra de ouro do repositório do SMART Desktop, que vale pra qualquer operação
+ * de escrita ou commit:
+ *
+ *  - `.pbl`, `.pbw`, `.pbd` são artefatos de build do PowerBuilder. **Nunca**
+ *    entram num commit — e a plataforma nem escreve neles. O working copy do dev
+ *    vive com dezenas deles modificados como efeito de compilar localmente;
+ *    tocar num é mandar binário de outra pessoa junto da correção.
+ *  - `.sru`, `.sra`, `.srd`, `.srw` são os fontes exportados: são estes que
+ *    versionam, e os únicos que sobem.
+ *
+ * Qualquer outra extensão é território de dúvida (`.pbr`, por exemplo, aparece
+ * em commits reais): não bloqueia a escrita, mas fica marcada como `outro` pra
+ * quem for montar o commit decidir explicitamente.
+ */
+const FORBIDDEN_EXTENSIONS = ['.pbl', '.pbw', '.pbd'];
+const SOURCE_EXTENSIONS = ['.sru', '.sra', '.srd', '.srw'];
+
+export type PathKind = 'fonte' | 'proibido' | 'outro';
+
+export function classifyPath(relPath: string): PathKind {
+  const lower = relPath.toLowerCase();
+  // basename: `agenda50.pbl.src/x.sru` tem ".pbl" no caminho e É fonte válido
+  const ext = lower.slice(lower.lastIndexOf('.'));
+  if (FORBIDDEN_EXTENSIONS.includes(ext)) return 'proibido';
+  if (SOURCE_EXTENSIONS.includes(ext)) return 'fonte';
+  return 'outro';
 }
 
 /**
@@ -155,6 +184,16 @@ export async function applyDiff(cardId: string, diff: string): Promise<ApplyResu
     const targets = parseDiffTargets(diff, strip);
     if (targets.length === 0) throw new WorkspaceError('não consegui identificar os arquivos do diff');
 
+    // Binário de build nunca é tocado — nem aqui, nem no commit. Recusa antes de
+    // copiar backup: o dry-run do patch passaria feliz por cima de um .pbl.
+    const forbidden = targets.filter((t) => classifyPath(t) === 'proibido');
+    if (forbidden.length > 0) {
+      throw new WorkspaceError(
+        `o diff mexe em artefato de build, que não pode ser alterado: ${forbidden.join(', ')}. ` +
+          'Só fontes exportados (.sru, .sra, .srd, .srw) podem ser modificados — nada foi alterado.',
+      );
+    }
+
     const backupDir = join(BACKUP_ROOT, cardId, String(Date.now()));
     for (const rel of targets) {
       const full = assertInsideWorkspace(rel);
@@ -196,7 +235,9 @@ export async function revertDiff(backupDir: string, files: string[]): Promise<vo
   try {
     await stat(backupDir);
   } catch {
-    throw new WorkspaceError('backup não encontrado — reverta pelo controle de versão (svn revert)');
+    throw new WorkspaceError(
+      'backup não encontrado — desfaça pelo controle de versão do seu working copy',
+    );
   }
 
   await restoreFromBackup(backupDir, files);

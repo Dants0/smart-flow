@@ -99,9 +99,16 @@ export async function jiraFetch(
   url: string,
   creds: JiraCredentials,
   userId: string,
+  init: RequestInit = {},
 ): Promise<Response> {
   const resp = await fetch(url, {
-    headers: { Authorization: authHeader(creds), Accept: 'application/json' },
+    ...init,
+    headers: {
+      Authorization: authHeader(creds),
+      Accept: 'application/json',
+      'content-type': 'application/json',
+      ...init.headers,
+    },
   });
 
   const denial = classifyDenial(resp.status, resp.headers.get('x-authentication-denied-reason'));
@@ -261,4 +268,24 @@ export async function testJiraConnection(userId: string): Promise<JiraConnection
     jqlError,
     latencyMs,
   };
+}
+
+/**
+ * Publica um comentário no chamado. É a única escrita da plataforma no Jira, e
+ * roda só por ação explícita do dev — comentário é registro oficial de entrega,
+ * visto pelo cliente e pelo time.
+ */
+export async function addJiraComment(userId: string, key: string, body: string): Promise<void> {
+  const { baseUrl, creds } = await jiraContext(userId);
+
+  const resp = await jiraFetch(
+    `${baseUrl}/rest/api/2/issue/${encodeURIComponent(key)}/comment`,
+    creds,
+    userId,
+    { method: 'POST', body: JSON.stringify({ body }) },
+  );
+
+  if (!resp.ok) {
+    throw new Error(`Jira recusou o comentário (HTTP ${resp.status}): ${await resp.text()}`);
+  }
 }

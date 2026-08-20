@@ -8,6 +8,7 @@ import { TextField, SaveBar, SettingsSection, FieldGroup } from "@/components/se
 import { HelpTip } from "@/components/HelpTip";
 import { JiraTroubleshooting } from "@/components/JiraTroubleshooting";
 import { JiraConnectionCheck } from "@/components/settings/JiraConnectionCheck";
+import { BitbucketCheck } from "@/components/settings/BitbucketCheck";
 
 export default function AccountSettingsPage() {
   const [me, setMe] = useState<AuthUser | null>(null);
@@ -19,6 +20,10 @@ export default function AccountSettingsPage() {
   const [password, setPassword] = useState("");
   const [jiraUser, setJiraUser] = useState("");
   const [jiraPassword, setJiraPassword] = useState("");
+  const [gitName, setGitName] = useState("");
+  const [gitEmail, setGitEmail] = useState("");
+  const [bitbucketUser, setBitbucketUser] = useState("");
+  const [bitbucketAppPassword, setBitbucketAppPassword] = useState("");
 
   useEffect(() => {
     getMe()
@@ -26,6 +31,9 @@ export default function AccountSettingsPage() {
         setMe(u);
         setDisplayName(u.displayName);
         setJiraUser(u.jiraUser ?? "");
+        setGitName(u.gitName ?? "");
+        setGitEmail(u.gitEmail ?? "");
+        setBitbucketUser(u.bitbucketUser ?? "");
       })
       .catch((err) => setError(err instanceof Error ? err.message : "falha ao carregar"));
   }, []);
@@ -35,14 +43,22 @@ export default function AccountSettingsPage() {
     setSaved(false);
     setError(null);
     try {
-      const patch: Parameters<typeof updateMe>[0] = { displayName, jiraUser };
+      const patch: Parameters<typeof updateMe>[0] = {
+        displayName,
+        jiraUser,
+        gitName,
+        gitEmail,
+        bitbucketUser,
+      };
       if (password.trim()) patch.password = password.trim();
       if (jiraPassword.trim()) patch.jiraPassword = jiraPassword.trim();
+      if (bitbucketAppPassword.trim()) patch.bitbucketAppPassword = bitbucketAppPassword.trim();
 
       const updated = await updateMe(patch);
       setMe(updated);
       setPassword("");
       setJiraPassword("");
+      setBitbucketAppPassword("");
       setSaved(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : "falha ao salvar");
@@ -54,6 +70,8 @@ export default function AccountSettingsPage() {
   // Campos do Jira alterados e ainda não salvos: o teste usa a credencial
   // gravada, então testar agora responderia sobre a senha antiga.
   const jiraDirty = !!jiraPassword.trim() || jiraUser !== (me?.jiraUser ?? "");
+  const bitbucketDirty =
+    !!bitbucketAppPassword.trim() || bitbucketUser !== (me?.bitbucketUser ?? "");
 
   if (!me) {
     return (
@@ -148,6 +166,57 @@ export default function AccountSettingsPage() {
           hasCredentials={!!me.jiraUser && me.jiraPasswordSet}
           dirty={jiraDirty}
           onTested={setMe}
+        />
+      </FieldGroup>
+
+      {/*
+        Versionamento: commit e PR saem como o dev, não como um robô da
+        plataforma — por isso identidade e credencial são pessoais, como as do Jira.
+      */}
+      <FieldGroup title="Versionamento (Bitbucket)">
+        <p className="text-xs leading-relaxed text-zinc-400">
+          Usado quando você manda a plataforma commitar e abrir o PR. Opcional: sem isso, a
+          esteira funciona igual e você versiona na mão. A <strong>app password</strong> é criada
+          em Bitbucket → Personal settings → App passwords, com permissão de{" "}
+          <em>Repositories: write</em> e <em>Pull requests: write</em>.
+        </p>
+
+        <TextField
+          label="Nome no commit"
+          value={gitName}
+          onChange={setGitName}
+          placeholder={me.displayName}
+          hint="Em branco, usa seu nome de exibição."
+        />
+        <TextField
+          label="E-mail no commit"
+          value={gitEmail}
+          onChange={setGitEmail}
+          placeholder="voce@pixeon.com"
+          hint="Sem e-mail o commit não é feito — o git exige identidade."
+        />
+        <TextField
+          label="Usuário do Bitbucket"
+          value={bitbucketUser}
+          onChange={setBitbucketUser}
+          placeholder="seu.usuario"
+        />
+        <TextField
+          label="App password"
+          type="password"
+          value={bitbucketAppPassword}
+          onChange={setBitbucketAppPassword}
+          placeholder={
+            me.bitbucketAppPasswordSet
+              ? "•••••••• (já configurada — deixe em branco pra manter)"
+              : "app password do Bitbucket"
+          }
+          hint="Guardada cifrada (AES-256-GCM). Nunca é gravada no .git/config do seu working copy."
+        />
+
+        <BitbucketCheck
+          hasCredentials={!!me.bitbucketUser && me.bitbucketAppPasswordSet}
+          dirty={bitbucketDirty}
         />
       </FieldGroup>
 

@@ -43,6 +43,16 @@ proposta apontar objeto que não existe.
 - **PFC.** Herança e ancestrais próprios do framework: sobrescrever evento sem
   chamar o ancestral quebra comportamento padrão de forma difícil de rastrear.
 
+## O que se altera (e o que nunca se altera)
+
+O código versionado são os **fontes exportados**: `.sru`, `.sra`, `.srd`, `.srw`,
+que vivem em `ws_objects/<lib>/<lib>.pbl.src/`. São os únicos arquivos que uma
+correção altera e os únicos que entram num commit.
+
+`.pbl`, `.pbw` e `.pbd` são artefatos de build do PowerBuilder: aparecem
+modificados no working copy só por efeito de compilar, e **nunca** sobem. Diff
+que os toque é recusado pela plataforma.
+
 ## Evidência de execução
 
 Chamado com log de **pbtrace** anexado é analisado antes pelo app_trace, e o

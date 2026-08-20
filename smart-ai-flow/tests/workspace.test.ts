@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseDiffTargets, resolveInside } from '../src/infra/workspace';
+import { classifyPath, parseDiffTargets, resolveInside } from '../src/infra/workspace';
 
 const GIT_STYLE = `--- a/ws_objects/atende50/w_atende.srw
 +++ b/ws_objects/atende50/w_atende.srw
@@ -52,5 +52,35 @@ describe('resolveInside', () => {
 
   it('recusa a própria raiz como alvo', () => {
     expect(resolveInside(root, '.')).toBeNull();
+  });
+});
+
+describe('classifyPath — regra de commit do SMART Desktop', () => {
+  it('artefato de build é proibido', () => {
+    expect(classifyPath('agenda50/agenda50.pbl')).toBe('proibido');
+    expect(classifyPath('smart.pbw')).toBe('proibido');
+    expect(classifyPath('aplgen50/aplg50_1.pbd')).toBe('proibido');
+  });
+
+  it('não confunde a PASTA .pbl.src com o binário .pbl', () => {
+    // é o caso mais comum do repo: o fonte mora dentro de "<lib>.pbl.src/"
+    expect(classifyPath('ws_objects/Audit50/audit50.pbl.src/d_aud01tab.srd')).toBe('fonte');
+  });
+
+  it('fontes exportados são o que sobe', () => {
+    expect(classifyPath('ws_objects/x/u_nv_cabecalho_t.sru')).toBe('fonte');
+    expect(classifyPath('ws_objects/x/audit.sra')).toBe('fonte');
+    expect(classifyPath('ws_objects/x/w_atende.srw')).toBe('fonte');
+  });
+
+  it('ignora caixa da extensão', () => {
+    expect(classifyPath('AGENDA50/AGENDA50.PBL')).toBe('proibido');
+    expect(classifyPath('ws_objects/X/W_ATENDE.SRW')).toBe('fonte');
+  });
+
+  it('o resto fica como "outro" — decisão explícita de quem monta o commit', () => {
+    // .pbr aparece em commit real do repo, então bloquear seria errado
+    expect(classifyPath('ocup50/ocup50.pbr')).toBe('outro');
+    expect(classifyPath('README.md')).toBe('outro');
   });
 });

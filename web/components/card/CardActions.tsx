@@ -18,6 +18,7 @@ import {
   revertCardDiff,
 } from "@/lib/api";
 import { loadTraceProviderSettings } from "@/lib/settings";
+import { VersioningPanel } from "./VersioningPanel";
 
 /**
  * Ações dos gates humanos (REVISAO e ERRO). Separado do painel pelo mesmo motivo
@@ -65,6 +66,10 @@ export function CardActions({
     }
   }
 
+  if (card.stage === "VERSIONAMENTO") {
+    return <VersioningPanel card={card} onUpdated={onUpdated} />;
+  }
+
   if (card.stage !== "REVISAO" && card.stage !== "ERRO") return null;
 
   return (
@@ -74,6 +79,11 @@ export function CardActions({
           {error}
         </p>
       )}
+
+  {/* Diff aplicado: a partir daqui dá pra versionar (commit na branch do chamado). */}
+  {card.stage === "REVISAO" && card.appliedAt && (
+    <VersioningPanel card={card} onUpdated={onUpdated} />
+  )}
 
   {/* ações do gate REVISAO */}
   {card.stage === "REVISAO" && (

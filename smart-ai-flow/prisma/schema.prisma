@@ -15,6 +15,7 @@ enum Stage {
   ANALISE
   DESENVOLVIMENTO
   REVISAO
+  VERSIONAMENTO
   RESOLVIDO
   ERRO
 }
@@ -44,6 +45,14 @@ model User {
   // Marcado aqui, o backend PARA de tentar até o dev regravar a senha.
   jiraAuthBlockedAt     DateTime?
   jiraAuthBlockedReason String?
+
+  // Identidade e credencial do Bitbucket, por usuário: o commit e o PR são DELE,
+  // não de um robô da plataforma. A app password é cifrada (mesmo esquema da
+  // senha do Jira — precisa ser reversível pro Basic Auth do git/API).
+  gitName                 String?
+  gitEmail                String?
+  bitbucketUser           String?
+  bitbucketAppPasswordEnc String?
 
   cards           Card[]
   dismissedIssues DismissedIssue[]
@@ -93,6 +102,13 @@ model Card {
   appliedAt        DateTime?
   appliedFiles     Json? // string[] — caminhos relativos à raiz do working copy
   appliedBackupDir String?
+
+  // Versionamento: o que foi de fato pro repositório e pro Jira.
+  branch          String? // bug/SMART-XXXXX
+  commitHash      String?
+  committedFiles  Json? // string[] — subconjunto de appliedFiles que entrou no commit
+  prUrl           String?
+  jiraCommentAt   DateTime?
 
   createdBy   User?   @relation(fields: [createdById], references: [id])
   createdById String?

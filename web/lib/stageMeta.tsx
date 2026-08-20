@@ -5,6 +5,7 @@ import {
   LuEye,
   LuCircleCheckBig,
   LuTriangleAlert,
+  LuGitPullRequest,
 } from "react-icons/lu";
 import type { IconType } from "react-icons";
 import type { Stage } from "./types";
@@ -45,6 +46,13 @@ export const STAGE_META: Record<Stage, StageMeta> = {
     dot: "bg-amber-500",
     chip: "bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300",
     header: "text-amber-600 dark:text-amber-400",
+  },
+  VERSIONAMENTO: {
+    icon: LuGitPullRequest,
+    label: "Versionamento",
+    dot: "bg-sky-500",
+    chip: "bg-sky-100 text-sky-700 dark:bg-sky-950 dark:text-sky-300",
+    header: "text-sky-600 dark:text-sky-400",
   },
   RESOLVIDO: {
     icon: LuCircleCheckBig,

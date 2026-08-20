@@ -64,6 +64,13 @@ export interface Card {
   appliedFiles?: string[];
   /** Backup dos arquivos antes do apply — é o que permite reverter pela UI. */
   appliedBackupDir?: string;
+
+  /** Versionamento: o que foi de fato pro repositório e pro Jira. */
+  branch?: string;
+  commitHash?: string;
+  committedFiles?: string[];
+  prUrl?: string;
+  jiraCommentAt?: string;
   createdById?: string;
 
   history: HistoryEntry[];

@@ -160,6 +160,41 @@ um botão para virar card. Nada é criado ou analisado sem o seu clique.
 
 ---
 
+## Versionamento: commit, PR e comentário no Jira
+
+Depois de aplicar o diff, o card oferece a etapa de **VERSIONAMENTO**. Ela faz,
+por clique explícito seu, o que você faria na mão:
+
+1. **Confere a branch.** Tem que ser `bug/SMART-XXXXX` do chamado. Se não for, a
+   plataforma **recusa e não troca** — trocar de branch com a árvore suja
+   destruiria trabalho seu.
+2. **Mostra o que vai subir**, arquivo por arquivo, com o status do git:
+   - fonte exportado (`.sru`, `.sra`, `.srd`, `.srw`) entra **marcado**;
+   - artefato de build (`.pbl`, `.pbw`, `.pbd`) aparece **bloqueado**, sem opção;
+   - qualquer outra extensão entra **desmarcada e com aviso** — é o "artefato
+     estranho" que você precisa olhar antes de decidir;
+   - o resto da árvore suja (os `.pbl` do seu build) nem aparece como opção.
+3. **Commita só o que você marcou**, com `:bug:fix SMART-XXXXX`, assinado com a
+   sua identidade de git. Nunca `git add -A`.
+4. **Push da branch e abre o PR** no Bitbucket com a sua app password. Se já
+   existir PR aberto para a branch, ele é reaproveitado em vez de duplicado.
+5. **Monta o comentário de entrega** no template do time, para você revisar e
+   publicar no chamado. **EVIDÊNCIAS sai sempre em branco**: é prova de teste, e
+   a plataforma não testou nada.
+
+Configure em **Configurações → Minha conta → Versionamento (Bitbucket)**: nome e
+e-mail do commit, usuário e app password (Bitbucket → Personal settings → App
+passwords, com `Repositories: write` e `Pull requests: write`). O botão **Testar
+conexão** confirma o acesso ao repositório antes de você precisar dele, e o
+Monitor de Recursos mostra **Bitbucket (versionamento)** e a branch atual do
+working copy.
+
+A credencial é **por dev**: o commit e o PR aparecem como seus. A app password
+nunca é gravada no `.git/config` — é injetada só na chamada de push, e mensagens
+de erro do git passam por um filtro que remove credencial da URL.
+
+---
+
 ## Aplicar o diff no código
 
 Em **REVISÃO**, o botão **"Aplicar o diff no código"** escreve a proposta no

@@ -91,6 +91,10 @@ export function getMe(): Promise<AuthUser> {
 export function updateMe(patch: {
   displayName?: string;
   password?: string;
+  gitName?: string;
+  gitEmail?: string;
+  bitbucketUser?: string;
+  bitbucketAppPassword?: string;
   jiraUser?: string;
   jiraPassword?: string;
 }): Promise<AuthUser> {
@@ -299,4 +303,57 @@ export interface MonitorSnapshot {
 
 export function fetchMonitor(): Promise<MonitorSnapshot> {
   return request("/monitor");
+}
+
+// ---- Versionamento (commit, push, PR, comentário no Jira) ------------------
+
+export interface FileToCommit {
+  path: string;
+  kind: "fonte" | "proibido" | "outro";
+  status: string;
+  autoSelect: boolean;
+}
+
+export interface VersioningPreview {
+  currentBranch: string;
+  expectedBranch: string;
+  onExpectedBranch: boolean;
+  remoteUrl: string;
+  files: FileToCommit[];
+  otherDirtyCount: number;
+}
+
+/** Retrato do commit antes de qualquer clique — branch, arquivos e classificação. */
+export function getVersioningPreview(id: string): Promise<VersioningPreview> {
+  return request(`/cards/${id}/versioning`);
+}
+
+export function commitCard(
+  id: string,
+  input: { files: string[]; message?: string },
+): Promise<Card> {
+  return request(`/cards/${id}/commit`, { method: "POST", body: JSON.stringify(input) });
+}
+
+/** Push da branch + abertura do PR no Bitbucket. */
+export function openPullRequest(id: string): Promise<Card> {
+  return request(`/cards/${id}/pull-request`, { method: "POST" });
+}
+
+export function getJiraCommentDraft(id: string): Promise<{ body: string }> {
+  return request(`/cards/${id}/jira-comment`);
+}
+
+export function postJiraComment(id: string, body: string): Promise<Card> {
+  return request(`/cards/${id}/jira-comment`, { method: "POST", body: JSON.stringify({ body }) });
+}
+
+export interface BitbucketAccess {
+  fullName: string;
+  ok: boolean;
+  detail: string;
+}
+
+export function testBitbucketConnection(): Promise<BitbucketAccess> {
+  return request("/me/bitbucket/test", { method: "POST" });
 }

@@ -14,6 +14,12 @@ export interface AuthUser {
   setupPending: SetupStep[];
   /** Preenchido quando o Jira negou a autenticação e o backend parou de tentar. */
   jiraAuthBlocked?: { at: string; reason: string };
+
+  /** Identidade e credencial de commit/PR — o versionamento é feito como o dev. */
+  gitName: string | null;
+  gitEmail: string | null;
+  bitbucketUser: string | null;
+  bitbucketAppPasswordSet: boolean;
 }
 
 export type SetupStep = 'password' | 'jira';
@@ -34,6 +40,10 @@ function toAuthUser(row: {
   jiraPasswordEnc: string | null;
   jiraAuthBlockedAt?: Date | null;
   jiraAuthBlockedReason?: string | null;
+  gitName?: string | null;
+  gitEmail?: string | null;
+  bitbucketUser?: string | null;
+  bitbucketAppPasswordEnc?: string | null;
 }): AuthUser {
   // Sem credencial do Jira o banner de chamados atribuídos simplesmente nunca
   // aparece — e o usuário novo não tem como adivinhar o porquê. Por isso a
@@ -57,6 +67,10 @@ function toAuthUser(row: {
           reason: row.jiraAuthBlockedReason ?? 'autenticação negada pelo Jira',
         }
       : undefined,
+    gitName: row.gitName ?? null,
+    gitEmail: row.gitEmail ?? null,
+    bitbucketUser: row.bitbucketUser ?? null,
+    bitbucketAppPasswordSet: !!row.bitbucketAppPasswordEnc,
   };
 }
 
@@ -106,7 +120,16 @@ export async function createUser(input: {
 
 export async function updateUser(
   id: string,
-  patch: { displayName?: string; password?: string; jiraUser?: string; jiraPassword?: string },
+  patch: {
+    displayName?: string;
+    password?: string;
+    jiraUser?: string;
+    jiraPassword?: string;
+    gitName?: string;
+    gitEmail?: string;
+    bitbucketUser?: string;
+    bitbucketAppPassword?: string;
+  },
 ): Promise<AuthUser> {
   const data: Record<string, string | boolean | Date | null> = {};
   if (patch.displayName) data.displayName = patch.displayName;
@@ -123,6 +146,13 @@ export async function updateUser(
   if (patch.jiraUser !== undefined || patch.jiraPassword) {
     data.jiraAuthBlockedAt = null;
     data.jiraAuthBlockedReason = null;
+  }
+
+  if (patch.gitName !== undefined) data.gitName = patch.gitName.trim() || null;
+  if (patch.gitEmail !== undefined) data.gitEmail = patch.gitEmail.trim() || null;
+  if (patch.bitbucketUser !== undefined) data.bitbucketUser = patch.bitbucketUser.trim() || null;
+  if (patch.bitbucketAppPassword) {
+    data.bitbucketAppPasswordEnc = encryptSecret(patch.bitbucketAppPassword.trim());
   }
 
   const row = await prisma.user.update({ where: { id }, data });
@@ -174,6 +204,25 @@ export async function getJiraAuthBlock(
   });
   if (!row?.jiraAuthBlockedAt) return null;
   return { at: row.jiraAuthBlockedAt, reason: row.jiraAuthBlockedReason ?? 'autenticação negada pelo Jira' };
+}
+
+/** Credencial do Bitbucket em claro — só pra uso imediato no push/PR. */
+export async function getBitbucketCredentials(
+  userId: string,
+): Promise<{ user: string; appPassword: string } | null> {
+  const row = await prisma.user.findUnique({ where: { id: userId } });
+  if (!row?.bitbucketUser || !row.bitbucketAppPasswordEnc) return null;
+  return { user: row.bitbucketUser, appPassword: decryptSecret(row.bitbucketAppPasswordEnc) };
+}
+
+/** Identidade do commit. Cai pro nome de exibição quando o dev não preencheu. */
+export async function getGitIdentity(
+  userId: string,
+): Promise<{ name: string; email: string } | null> {
+  const row = await prisma.user.findUnique({ where: { id: userId } });
+  if (!row) return null;
+  if (!row.gitEmail) return null;
+  return { name: row.gitName || row.displayName, email: row.gitEmail };
 }
 
 export async function listDismissed(userId: string): Promise<Set<string>> {
