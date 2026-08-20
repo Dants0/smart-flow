@@ -24,6 +24,8 @@ export interface LlmResult {
   model: string;
   inputTokens: number;
   outputTokens: number;
+  /** true = a resposta foi CORTADA no limite de tokens (JSON chega pela metade). */
+  truncated: boolean;
 }
 
 export async function callLlm(req: LlmRequest): Promise<LlmResult> {
@@ -72,6 +74,7 @@ async function callAnthropic(
     model: settings.model,
     inputTokens: resp.usage?.input_tokens ?? 0,
     outputTokens: resp.usage?.output_tokens ?? 0,
+    truncated: resp.stop_reason === 'max_tokens',
   };
 }
 
@@ -100,6 +103,10 @@ async function callOpenAI(
     body: JSON.stringify({
       model: settings.openaiModel,
       max_tokens: maxTokens,
+      // Modo JSON nativo: elimina cerca de markdown e frase de abertura, que eram
+      // metade das falhas de parse. O system prompt já pede 'objeto JSON', que é
+      // o que a OpenAI exige pra aceitar este formato.
+      response_format: { type: 'json_object' },
       messages: [
         { role: 'system', content: system },
         { role: 'user', content },
@@ -112,7 +119,7 @@ async function callOpenAI(
   }
 
   const json = (await resp.json()) as {
-    choices?: { message?: { content?: string } }[];
+    choices?: { message?: { content?: string }; finish_reason?: string }[];
     usage?: { prompt_tokens?: number; completion_tokens?: number };
   };
   const text = json.choices?.[0]?.message?.content;
@@ -126,5 +133,6 @@ async function callOpenAI(
     model: settings.openaiModel,
     inputTokens: json.usage?.prompt_tokens ?? 0,
     outputTokens: json.usage?.completion_tokens ?? 0,
+    truncated: json.choices?.[0]?.finish_reason === 'length',
   };
 }

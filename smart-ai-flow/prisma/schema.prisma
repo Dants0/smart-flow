@@ -37,6 +37,14 @@ model User {
   jiraUser        String?
   jiraPasswordEnc String?
 
+  // Jira Server arma um CAPTCHA depois de N logins falhados e passa a negar até
+  // a senha certa. Como o board consulta o Jira a cada 60s, uma credencial
+  // errada vira uma máquina de rearmar esse bloqueio no servidor da empresa —
+  // e o dev destrava pelo navegador só pra travar de novo minutos depois.
+  // Marcado aqui, o backend PARA de tentar até o dev regravar a senha.
+  jiraAuthBlockedAt     DateTime?
+  jiraAuthBlockedReason String?
+
   cards           Card[]
   dismissedIssues DismissedIssue[]
   history         History[]
@@ -78,6 +86,13 @@ model Card {
   // é este texto que vai pra base de conhecimento do pb-insight no RESOLVIDO,
   // senão a base aprende a solução errada e piora com o tempo.
   resolutionText String?
+
+  // Aplicação do diff no working copy (ação do dev em REVISAO). appliedFiles
+  // e appliedBackupDir são o que torna a operação reversível pela UI: sem eles,
+  // desfazer só pelo controle de versão.
+  appliedAt        DateTime?
+  appliedFiles     Json? // string[] — caminhos relativos à raiz do working copy
+  appliedBackupDir String?
 
   createdBy   User?   @relation(fields: [createdById], references: [id])
   createdById String?
@@ -157,6 +172,11 @@ model PlatformSettings {
   jiraAssignedJql String  @default("assignee = currentUser() AND resolution = Unresolved ORDER BY created DESC")
 
   pbInsightUrl String @default("http://127.0.0.1:4500")
+
+  // Skill do time: procedimento colado pelo dev em Configurações > IA, entra no
+  // prompt de ANALISE e DESENVOLVIMENTO. Texto livre (markdown), sem formato
+  // imposto — null = nenhuma skill, e a esteira roda como antes.
+  skills String?
 
   updatedAt DateTime @updatedAt
 }

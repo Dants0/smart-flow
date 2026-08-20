@@ -172,6 +172,61 @@ export function TextField({
   );
 }
 
+/**
+ * Campo de texto longo pra conteúdo colado (skill, procedimento). Monoespaçado
+ * porque o que entra aqui é markdown/passo a passo e o alinhamento importa na
+ * hora de conferir o que foi colado.
+ */
+export function TextAreaField({
+  label,
+  value,
+  onChange,
+  placeholder,
+  hint,
+  rows = 14,
+  maxChars,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  placeholder?: string;
+  hint?: string;
+  rows?: number;
+  /** Só informativo: quem barra de verdade é o backend. */
+  maxChars?: number;
+}) {
+  const over = maxChars !== undefined && value.length > maxChars;
+
+  return (
+    <label className="flex flex-col gap-1.5 text-sm">
+      <span className="font-medium text-zinc-700 dark:text-zinc-300">{label}</span>
+      {hint && <span className="text-xs leading-relaxed text-zinc-400">{hint}</span>}
+      <textarea
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        rows={rows}
+        spellCheck={false}
+        className={`resize-y rounded-lg border bg-white px-3.5 py-2.5 font-mono text-xs leading-relaxed text-zinc-800 outline-none transition focus:ring-2 dark:bg-zinc-950 dark:text-zinc-100 ${
+          over
+            ? "border-red-400 focus:border-red-500 focus:ring-red-100 dark:border-red-800 dark:focus:ring-red-950"
+            : "border-zinc-300 focus:border-zinc-500 focus:ring-zinc-100 dark:border-zinc-700 dark:focus:ring-zinc-800"
+        }`}
+      />
+      {maxChars !== undefined && (
+        <span
+          className={`self-end text-[11px] tabular-nums ${
+            over ? "font-medium text-red-600 dark:text-red-400" : "text-zinc-400"
+          }`}
+        >
+          {value.length.toLocaleString("pt-BR")} / {maxChars.toLocaleString("pt-BR")} caracteres
+          {over && " — o backend vai recusar"}
+        </span>
+      )}
+    </label>
+  );
+}
+
 export function SelectField({
   label,
   value,

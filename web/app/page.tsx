@@ -19,6 +19,7 @@ import {
   getCard,
   fetchPendingJiraIssues,
   dismissPendingJiraIssue,
+  ApiError,
   type PendingJiraIssue,
   type CardSummary,
   type CardFilters,
@@ -34,6 +35,7 @@ import { SettingsModal } from "@/components/SettingsModal";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { AuthGuard } from "@/components/AuthGuard";
 import { SetupBanner } from "@/components/SetupBanner";
+import { JiraBlockedBanner } from "@/components/JiraBlockedBanner";
 import { clearToken, type AuthUser } from "@/lib/auth";
 
 const POLL_MS = 5000;
@@ -56,6 +58,10 @@ function Board({ user }: { user: AuthUser }) {
   const [showSettings, setShowSettings] = useState(false);
   const [traceSettings, setTraceSettings] = useState<TraceProviderSettings | null>(null);
   const [pending, setPending] = useState<PendingJiraIssue[]>([]);
+  // Jira negou a autenticação: o backend parou de tentar e o polling para junto.
+  const [jiraBlocked, setJiraBlocked] = useState<string | null>(
+    user.jiraAuthBlocked?.reason ?? null,
+  );
 
   // `filters` muda a cada tecla; `applied` é o que de fato vai pro servidor.
   const [filters, setFilters] = useState<CardFilters>({ resolvedWithinDays: 7 });
@@ -120,19 +126,26 @@ function Board({ user }: { user: AuthUser }) {
   const refreshPending = useCallback(async () => {
     try {
       setPending(await fetchPendingJiraIssues());
-    } catch {
-      // Jira fora do ar é ruído; falta de credencial já aparece no SetupBanner.
+      setJiraBlocked(null);
+    } catch (err) {
       setPending([]);
+      // Negação de auth NÃO é ruído: some do board só quando o dev age, e o
+      // polling precisa parar pra não rearmar o CAPTCHA na conta dele.
+      if (err instanceof ApiError && err.code === 'JIRA_AUTH_BLOCKED') {
+        setJiraBlocked(err.message);
+      }
+      // Jira fora do ar segue ruído; falta de credencial já aparece no SetupBanner.
     }
   }, []);
 
   useEffect(() => {
     if (user.setupPending.includes("jira")) return; // sem credencial, nem tenta
+    if (jiraBlocked) return; // bloqueado: cada tentativa a mais trava a conta de novo
     // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch-on-mount + polling
     refreshPending();
     const id = setInterval(refreshPending, PENDING_POLL_MS);
     return () => clearInterval(id);
-  }, [refreshPending, user.setupPending]);
+  }, [refreshPending, user.setupPending, jiraBlocked]);
 
   async function handleDismissPending(key: string) {
     setPending((prev) => prev.filter((p) => p.key !== key));
@@ -201,6 +214,10 @@ function Board({ user }: { user: AuthUser }) {
       </header>
 
       <SetupBanner user={user} />
+
+      {jiraBlocked && (
+        <JiraBlockedBanner reason={jiraBlocked} onUnblocked={() => setJiraBlocked(null)} />
+      )}
 
       {error && (
         <div className="border-b border-red-200 bg-red-50 px-6 py-2 text-xs text-red-600 dark:border-red-900 dark:bg-red-950/50 dark:text-red-300">

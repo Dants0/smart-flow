@@ -12,6 +12,8 @@ export interface AuthUser {
   mustChangePassword: boolean;
   /** Pendências que impedem a plataforma de funcionar plenamente pra este usuário. */
   setupPending: SetupStep[];
+  /** Preenchido quando o Jira negou a autenticação e o backend parou de tentar. */
+  jiraAuthBlocked?: { at: string; reason: string };
 }
 
 export type SetupStep = 'password' | 'jira';
@@ -30,6 +32,8 @@ function toAuthUser(row: {
   mustChangePassword: boolean;
   jiraUser: string | null;
   jiraPasswordEnc: string | null;
+  jiraAuthBlockedAt?: Date | null;
+  jiraAuthBlockedReason?: string | null;
 }): AuthUser {
   // Sem credencial do Jira o banner de chamados atribuídos simplesmente nunca
   // aparece — e o usuário novo não tem como adivinhar o porquê. Por isso a
@@ -47,6 +51,12 @@ function toAuthUser(row: {
     jiraUser: row.jiraUser,
     jiraPasswordSet: !!row.jiraPasswordEnc,
     setupPending,
+    jiraAuthBlocked: row.jiraAuthBlockedAt
+      ? {
+          at: row.jiraAuthBlockedAt.toISOString(),
+          reason: row.jiraAuthBlockedReason ?? 'autenticação negada pelo Jira',
+        }
+      : undefined,
   };
 }
 
@@ -98,14 +108,22 @@ export async function updateUser(
   id: string,
   patch: { displayName?: string; password?: string; jiraUser?: string; jiraPassword?: string },
 ): Promise<AuthUser> {
-  const data: Record<string, string | boolean | null> = {};
+  const data: Record<string, string | boolean | Date | null> = {};
   if (patch.displayName) data.displayName = patch.displayName;
   if (patch.password) {
     data.passwordHash = hashPassword(patch.password);
     data.mustChangePassword = false; // trocou: a pendência de setup se resolve sozinha
   }
-  if (patch.jiraUser !== undefined) data.jiraUser = patch.jiraUser || null;
-  if (patch.jiraPassword) data.jiraPasswordEnc = encryptSecret(patch.jiraPassword);
+  // trim: senha colada com espaço no fim falha o Basic Auth de um jeito que
+  // parece 'senha errada' e ninguém encontra olhando o campo
+  if (patch.jiraUser !== undefined) data.jiraUser = patch.jiraUser.trim() || null;
+  if (patch.jiraPassword) data.jiraPasswordEnc = encryptSecret(patch.jiraPassword.trim());
+
+  // Regravar credencial é a forma normal de dizer 'corrigi, pode tentar de novo'.
+  if (patch.jiraUser !== undefined || patch.jiraPassword) {
+    data.jiraAuthBlockedAt = null;
+    data.jiraAuthBlockedReason = null;
+  }
 
   const row = await prisma.user.update({ where: { id }, data });
   return toAuthUser(row);
@@ -125,6 +143,37 @@ export async function getJiraCredentials(userId: string): Promise<JiraCredential
   const row = await prisma.user.findUnique({ where: { id: userId } });
   if (!row?.jiraUser || !row.jiraPasswordEnc) return null;
   return { user: row.jiraUser, password: decryptSecret(row.jiraPasswordEnc) };
+}
+
+/**
+ * Marca que o Jira negou a autenticação deste usuário. A partir daqui o backend
+ * não tenta mais — é o que impede o polling de 60s de rearmar o CAPTCHA no
+ * servidor logo depois de o dev destravar pelo navegador.
+ */
+export async function blockJiraAuth(userId: string, reason: string): Promise<void> {
+  await prisma.user.update({
+    where: { id: userId },
+    data: { jiraAuthBlockedAt: new Date(), jiraAuthBlockedReason: reason },
+  });
+}
+
+/** Libera as tentativas de novo (dev regravou a senha ou destravou no navegador). */
+export async function clearJiraAuthBlock(userId: string): Promise<void> {
+  await prisma.user.update({
+    where: { id: userId },
+    data: { jiraAuthBlockedAt: null, jiraAuthBlockedReason: null },
+  });
+}
+
+export async function getJiraAuthBlock(
+  userId: string,
+): Promise<{ at: Date; reason: string } | null> {
+  const row = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { jiraAuthBlockedAt: true, jiraAuthBlockedReason: true },
+  });
+  if (!row?.jiraAuthBlockedAt) return null;
+  return { at: row.jiraAuthBlockedAt, reason: row.jiraAuthBlockedReason ?? 'autenticação negada pelo Jira' };
 }
 
 export async function listDismissed(userId: string): Promise<Set<string>> {

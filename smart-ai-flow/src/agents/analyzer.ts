@@ -1,7 +1,9 @@
-import { callLlm } from '../infra/llm';
+import { callJsonAgent } from './jsonCall';
 import { retrieveContext } from '../infra/pbInsight';
 import { loadModuleContext } from '../infra/moduleContext';
-import { AnalyzerOutputSchema, parseAgentOutput, type AnalyzerOutput } from './contracts';
+import { getSettings } from '../infra/settingsRepository';
+import { buildSkillSection } from '../domain/skill';
+import { AnalyzerOutputSchema, type AnalyzerOutput } from './contracts';
 import type { Card } from '../domain/card';
 import type { LlmResult } from '../infra/llm';
 
@@ -31,6 +33,7 @@ Regras:
 
 export async function runAnalysis(card: Card): Promise<AnalysisResult> {
   const moduleContext = await loadModuleContext(card.module); // CLAUDE.md do módulo
+  const { skills } = await getSettings(); // skill do time (Configurações > IA)
   const { text: retrieved, grounded } = await retrieveContext(card.module, card.rawTicket); // RAG do PB Insight
 
   const traceSection = card.traceAnalysis?.length
@@ -59,16 +62,14 @@ export async function runAnalysis(card: Card): Promise<AnalysisResult> {
     retrieved,
   ].join('\n');
 
-  const result = await callLlm({
-    system: SYSTEM,
+  const { output, usage } = await callJsonAgent(AnalyzerOutputSchema, {
+    system: SYSTEM + buildSkillSection(skills),
     userText: userPrompt,
     images: card.images,
-    maxTokens: 2000,
+    // 2000 deixava pouca folga: análise com muitos objetos afetados chegava
+    // cortada e o JSON não fechava (o card ia pra ERRO sem motivo real).
+    maxTokens: 4000,
   });
 
-  return {
-    output: parseAgentOutput(AnalyzerOutputSchema, result.text),
-    usage: result,
-    grounded,
-  };
+  return { output, usage, grounded };
 }

@@ -1,10 +1,13 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { LuLoaderCircle, LuUser } from "react-icons/lu";
+import { LuLoaderCircle, LuUser, LuCircleAlert } from "react-icons/lu";
 import { getMe, updateMe } from "@/lib/api";
 import type { AuthUser } from "@/lib/auth";
 import { TextField, SaveBar, SettingsSection, FieldGroup } from "@/components/settings/fields";
+import { HelpTip } from "@/components/HelpTip";
+import { JiraTroubleshooting } from "@/components/JiraTroubleshooting";
+import { JiraConnectionCheck } from "@/components/settings/JiraConnectionCheck";
 
 export default function AccountSettingsPage() {
   const [me, setMe] = useState<AuthUser | null>(null);
@@ -47,6 +50,10 @@ export default function AccountSettingsPage() {
       setSaving(false);
     }
   }
+
+  // Campos do Jira alterados e ainda não salvos: o teste usa a credencial
+  // gravada, então testar agora responderia sobre a senha antiga.
+  const jiraDirty = !!jiraPassword.trim() || jiraUser !== (me?.jiraUser ?? "");
 
   if (!me) {
     return (
@@ -93,7 +100,33 @@ export default function AccountSettingsPage() {
         />
       </FieldGroup>
 
-      <FieldGroup title="Minhas credenciais do Jira">
+      <FieldGroup
+        title="Minhas credenciais do Jira"
+        badge={
+          <HelpTip
+            label="Ajuda para conectar no Jira"
+            title="Não estou conseguindo conectar no Jira"
+          >
+            <JiraTroubleshooting />
+          </HelpTip>
+        }
+      >
+        {/*
+          Bloqueio de auth: o backend parou de consultar o Jira com esta conta.
+          Salvar a senha aqui é o que libera — por isso o aviso mora neste grupo,
+          e não numa tela separada.
+        */}
+        {me.jiraAuthBlocked && (
+          <p className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2.5 text-xs leading-relaxed text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300">
+            <LuCircleAlert className="mt-0.5 size-4 shrink-0" />
+            <span>
+              <strong>O Jira recusou esta credencial</strong> em{" "}
+              {new Date(me.jiraAuthBlocked.at).toLocaleString("pt-BR")}, e as consultas estão
+              suspensas. {me.jiraAuthBlocked.reason} Salvar a senha abaixo libera as tentativas
+              de novo.
+            </span>
+          </p>
+        )}
         <TextField
           label="Usuário do Jira"
           value={jiraUser}
@@ -109,6 +142,12 @@ export default function AccountSettingsPage() {
             me.jiraPasswordSet ? "•••••••• (já configurada — deixe em branco pra manter)" : "sua senha do Jira"
           }
           hint="Guardada cifrada no banco (AES-256-GCM). Precisa ser reversível porque o Jira Server só aceita Basic Auth."
+        />
+
+        <JiraConnectionCheck
+          hasCredentials={!!me.jiraUser && me.jiraPasswordSet}
+          dirty={jiraDirty}
+          onTested={setMe}
         />
       </FieldGroup>
 

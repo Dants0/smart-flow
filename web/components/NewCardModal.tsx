@@ -9,8 +9,7 @@ import type { Card, CardImage, CardTraceFile } from "@/lib/types";
 import { cardImageSrc, filesToCardImages, MAX_IMAGES } from "@/lib/image";
 import { filesToTraceFiles, MAX_TRACE_FILES } from "@/lib/traceFile";
 import { loadTraceProviderSettings, PROVIDER_LABEL } from "@/lib/settings";
-
-const MODULES = ["smartweb", "atende", "agenda", "mwsus", "cadgf"];
+import { SYSTEMS } from "@/lib/systems";
 
 export function NewCardModal({
   onClose,
@@ -24,7 +23,7 @@ export function NewCardModal({
   initialJiraKey?: string;
 }) {
   const [jiraKey, setJiraKey] = useState(initialJiraKey ?? "");
-  const [module, setModule] = useState(MODULES[0]);
+  const [module, setModule] = useState<string>(SYSTEMS[0].value);
   const [rawTicket, setRawTicket] = useState("");
   const [images, setImages] = useState<CardImage[]>([]);
   const [traceFiles, setTraceFiles] = useState<CardTraceFile[]>([]);
@@ -171,18 +170,22 @@ export function NewCardModal({
             </label>
 
             <label className="flex flex-col gap-1 text-xs font-medium text-zinc-500">
-              Módulo
+              Sistema
               <select
                 value={module}
                 onChange={(e) => setModule(e.target.value)}
                 className="rounded-md border border-zinc-300 px-3 py-2 text-sm text-zinc-800 outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
               >
-                {MODULES.map((m) => (
-                  <option key={m} value={m}>
-                    {m}
+                {SYSTEMS.map((s) => (
+                  <option key={s.value} value={s.value}>
+                    {s.label}
                   </option>
                 ))}
               </select>
+              {/* o módulo (ATENDE, AGENDA...) não é escolhido aqui: quem identifica é a análise */}
+              <span className="text-[11px] font-normal leading-relaxed text-zinc-400">
+                {SYSTEMS.find((s) => s.value === module)?.hint}
+              </span>
             </label>
           </div>
 

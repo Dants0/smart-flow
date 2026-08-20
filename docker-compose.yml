@@ -35,6 +35,18 @@ services:
       # container do backend — era o que deixava os dois OFFLINE no monitor.
       TRACE_SERVICE_URL: ${TRACE_SERVICE_URL:-http://trace-api:8070}
       PB_INSIGHT_URL: ${PB_INSIGHT_URL:-http://pb-insight:4500}
+      # Working copy do SMART Desktop, montado abaixo. É o que habilita o botão
+      # "aplicar diff no código" em REVISAO — sem isso a esteira roda igual, só
+      # que o dev aplica o diff na mão, como antes.
+      SMART_DESKTOP_PATH: /smart_desktop
+      WORKSPACE_BACKUP_DIR: /app/.backups
+    volumes:
+      # LEITURA E ESCRITA, diferente do pb-insight (que monta :ro): é aqui que o
+      # diff é aplicado. Aponta pra pasta vazia quando a máquina não tem o repo,
+      # e aí o monitor mostra "Código (working copy)" indisponível.
+      - ${SMART_DESKTOP_PATH:-./.empty}:/smart_desktop
+      # Backup dos arquivos antes de cada apply — é o que permite reverter pela UI.
+      - applied_backups:/app/.backups
     ports:
       - "3333:3333"
     depends_on:
@@ -84,6 +96,7 @@ services:
       PB_INSIGHT_WS_ROOT: /smart_desktop/ws_objects
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       PB_INSIGHT_OPENAI_MODEL: ${PB_INSIGHT_OPENAI_MODEL:-gpt-4o-mini}
+      SMART_DESKTOP_PATH: ${SMART_DESKTOP_PATH:-C:/controle de versão/smart_desktop}
     volumes:
       # Índice gerado pelo ingest — volume nomeado pra sobreviver a rebuild.
       - pbinsight_data:/app/.data
@@ -95,6 +108,7 @@ services:
     restart: unless-stopped
 
 volumes:
-  # Nomeados: `docker compose down` (sem -v) preserva cards e índice.
+  # Nomeados: `docker compose down` (sem -v) preserva cards, índice e backups.
   pgdata:
   pbinsight_data:
+  applied_backups:

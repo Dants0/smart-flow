@@ -106,6 +106,11 @@ export interface Card {
   grounded?: boolean;
   /** O que o dev realmente aplicou — vai pra base de conhecimento no RESOLVIDO. */
   resolutionText?: string;
+  /** Quando a IA escreveu o diff no working copy (ação do dev em REVISAO). */
+  appliedAt?: string;
+  /** Arquivos alterados pelo apply, relativos à raiz do working copy. */
+  appliedFiles?: string[];
+  appliedBackupDir?: string;
   createdById?: string;
   history: HistoryEntry[];
   createdAt: string;

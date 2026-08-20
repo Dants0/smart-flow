@@ -1,5 +1,6 @@
 import { prisma } from './db';
 import { getSettings, type PlatformSettings } from './settingsRepository';
+import { checkWorkspace } from './workspace';
 
 /**
  * Checagem de saúde de tudo que a esteira depende — Postgres, os dois
@@ -135,11 +136,14 @@ async function checkJira(settings: PlatformSettings): Promise<ResourceStatus> {
 export async function checkResources(): Promise<ResourceStatus[]> {
   const settings = await getSettings();
 
-  const [postgres, appTrace, pbInsight, jira] = await Promise.all([
+  const [postgres, appTrace, pbInsight, jira, workspace] = await Promise.all([
     checkPostgres(),
     checkAppTrace(settings.traceServiceUrl),
     checkPbInsight(settings.pbInsightUrl),
     checkJira(settings),
+    // Só afeta o botão de aplicar diff em REVISAO: sem working copy gravável a
+    // esteira roda inteira, o dev é que volta a aplicar o diff na mão.
+    checkWorkspace().then((w) => ({ id: 'workspace', label: 'Código (working copy)', ...w })),
   ]);
 
   // Sem endpoint de health gratuito nas APIs de LLM — reporta "configurado",
@@ -168,5 +172,5 @@ export async function checkResources(): Promise<ResourceStatus[]> {
     detail: describeLlm(!!settings.openaiApiKey, openaiActive, settings.openaiModel),
   };
 
-  return [postgres, appTrace, pbInsight, jira, anthropic, openai];
+  return [postgres, appTrace, pbInsight, jira, workspace, anthropic, openai];
 }

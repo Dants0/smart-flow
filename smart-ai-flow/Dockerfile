@@ -2,7 +2,10 @@ FROM node:22-alpine
 WORKDIR /app
 
 # openssl: exigido pelo engine do Prisma no Alpine.
-RUN apk add --no-cache openssl
+# patch: aplica o diff da proposta no working copy (ver src/infra/workspace.ts).
+#        O GNU patch tolera deslocamento de contexto, que é o caso comum num
+#        diff gerado por LLM — git apply recusaria o mesmo diff.
+RUN apk add --no-cache openssl patch
 
 COPY package.json package-lock.json ./
 RUN npm ci

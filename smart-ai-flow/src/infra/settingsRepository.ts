@@ -21,6 +21,9 @@ export interface PlatformSettings {
 
   pbInsightUrl: string;
 
+  /** Skill do time (texto livre) injetada no prompt dos agentes. null = nenhuma. */
+  skills: string | null;
+
   updatedAt: string;
 }
 
@@ -110,6 +113,7 @@ function toSettings(row: Awaited<ReturnType<typeof ensureRow>>): PlatformSetting
     jiraBaseUrl: row.jiraBaseUrl,
     jiraAssignedJql: row.jiraAssignedJql,
     pbInsightUrl: row.pbInsightUrl,
+    skills: row.skills,
     updatedAt: row.updatedAt.toISOString(),
   };
 }

@@ -1,9 +1,11 @@
 "use client";
 
-import { LuBot, LuUser, LuImage, LuActivity, LuTriangleAlert } from "react-icons/lu";
+import Link from "next/link";
+import { LuBot, LuUser, LuImage, LuActivity, LuTriangleAlert, LuMaximize2 } from "react-icons/lu";
 import type { CardSummary } from "@/lib/api";
 import { STAGE_OWNER } from "@/lib/types";
 import { timeAgo } from "@/lib/time";
+import { systemLabel } from "@/lib/systems";
 
 export function CardTile({
   card,
@@ -16,16 +18,41 @@ export function CardTile({
   const OwnerIcon = owner === "IA" ? LuBot : LuUser;
 
   return (
-    <button
+    /*
+     * Div com role="button" em vez de <button>: o número do chamado agora é um
+     * link de verdade, e âncora dentro de botão é HTML inválido — o navegador
+     * desmonta a marcação e o clique passa a se comportar de um jeito em cada
+     * um. Com div, os dois alvos convivem: o número abre a página do card em
+     * outra aba, o resto do cartão abre o painel lateral.
+     */
+    <div
+      role="button"
+      tabIndex={0}
       onClick={onClick}
-      className="w-full rounded-lg border border-zinc-200 bg-white p-3 text-left shadow-sm transition hover:border-zinc-300 hover:shadow dark:border-zinc-800 dark:bg-zinc-900 dark:hover:border-zinc-700"
+      onKeyDown={(e) => {
+        // teclado precisa continuar abrindo o card como abria com <button>
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onClick();
+        }
+      }}
+      className="w-full cursor-pointer rounded-lg border border-zinc-200 bg-white p-3 text-left shadow-sm transition hover:border-zinc-300 hover:shadow focus:outline-none focus-visible:ring-2 focus-visible:ring-zinc-400 dark:border-zinc-800 dark:bg-zinc-900 dark:hover:border-zinc-700"
     >
       <div className="mb-1.5 flex items-center justify-between gap-2">
-        <span className="font-mono text-xs font-semibold text-zinc-500 dark:text-zinc-400">
+        <Link
+          href={`/cards/${card.id}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          // sem isto, o clique no número abriria o painel atrás da aba nova
+          onClick={(e) => e.stopPropagation()}
+          title="Abrir o chamado inteiro numa nova aba"
+          className="group flex items-center gap-1 font-mono text-xs font-semibold text-zinc-500 underline-offset-4 hover:text-zinc-800 hover:underline dark:text-zinc-400 dark:hover:text-zinc-100"
+        >
           {card.jiraKey}
-        </span>
+          <LuMaximize2 className="size-3 text-zinc-300 transition group-hover:text-zinc-500 dark:text-zinc-600 dark:group-hover:text-zinc-300" />
+        </Link>
         <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
-          {card.module}
+          {systemLabel(card.module)}
         </span>
       </div>
 
@@ -66,6 +93,6 @@ export function CardTile({
           {timeAgo(card.updatedAt)}
         </span>
       </div>
-    </button>
+    </div>
   );
 }

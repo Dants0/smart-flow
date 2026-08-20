@@ -5,8 +5,11 @@ Esteira de IA (estilo Kanban) para resolução assistida de chamados no
 terminal via console" e transforma em algo visual, centralizado e auditável —
 com o **dev sempre no controle**.
 
-Cobre o SMART Desktop inteiro: cada módulo (ATENDE, AGENDA, SMARTWEB, MWSUS,
-CADGF) tem seu próprio briefing em `modules/<modulo>/CLAUDE.md`.
+O card escolhe o **sistema** — SMART Desktop ou SMART Web —, não o módulo: o
+SMART Desktop acopla ATENDE, AGENDA, MWSUS e CADGF, e identificar qual deles é
+o alvo faz parte da análise. Cada um tem seu briefing em
+`modules/<modulo>/CLAUDE.md`, e os do SMART Desktop entram juntos no prompt
+(ver `src/infra/moduleContext.ts`).
 
 > Nome de trabalho: `smart-ai-flow`. Troque pelo nome que vocês quiserem
 > deixar na fita. 😉
@@ -24,12 +27,17 @@ NOVO            ANALISE          DESENVOLVIMENTO     REVISAO            RESOLVID
 Só os estágios de **IA** rodam automáticos. Ao criar o card, o backend
 dispara ANALISE → DESENVOLVIMENTO e **para em REVISAO**, esperando o dev.
 
-## Arquitetura (decisão: "IA propõe, dev aplica")
+## Arquitetura (decisão: "IA propõe, dev decide")
 
-- Backend com **acesso só-leitura** ao repo — nunca toca no SVN/git.
-- O **token corporativo vive só no backend** (`src/infra/anthropic.ts`).
+- O pipeline (ANALISE/DESENVOLVIMENTO) lê o código, nunca escreve. A escrita
+  existe num único ponto: o dev clicar em "aplicar o diff" em REVISAO
+  (`src/infra/workspace.ts`), com dry-run, backup e reversão.
+- **O backend nunca toca no controle de versão** — não commita, não cria branch,
+  não reverte. O que ele faz aparece como alteração local do dev.
+- O **token corporativo vive só no backend** (`src/infra/llm.ts`, chave vinda de Configurações > IA).
   Nenhum dev bate na API pela própria máquina → custo e uso auditáveis.
-- Contexto da IA = `CLAUDE.md` do módulo + RAG do **PB Insight** + o chamado.
+- Contexto da IA = `CLAUDE.md` do sistema + RAG do **PB Insight** + a skill do
+  time (Configurações > IA) + o chamado.
 - Loop do RESOLVIDO fecha com **pbtrace** (antes/depois) como evidência.
 
 ## Estrutura
@@ -39,7 +47,7 @@ src/
   domain/        stages.ts (máquina de estados) + card.ts (entidade)
   agents/        contracts.ts (Zod) + analyzer.ts + proposer.ts
   orchestrator/  orchestrator.ts (segura o token, roda estágios de IA)
-  infra/         anthropic.ts + pbInsight.ts (RAG) + moduleContext.ts
+  infra/         llm.ts + pbInsight.ts (RAG) + moduleContext.ts + workspace.ts
   http/          routes.ts (Fastify)
 modules/         um CLAUDE.md por módulo do SMART Desktop
   atende/  agenda/  smartweb/  mwsus/  cadgf/

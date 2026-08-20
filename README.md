@@ -69,12 +69,45 @@ Já dentro da aplicação, em **Configurações**:
 
 1. **IA** *(admin)* — chave da Anthropic ou da OpenAI, e qual provider usar.
    Sem isso a análise não roda.
-2. **Jira** *(admin)* — a URL da instância (ex.: `https://portalcliente.pixeon.com`).
-3. **Minha conta** — **seu** usuário e senha do Jira. São pessoais: é com eles
+2. **IA → Skills** *(admin)* — campo aberto onde o dev cola o procedimento que o
+   time segue pra resolver chamado. Opcional, mas é o jeito mais barato de
+   melhorar a análise (ver abaixo).
+3. **Jira** *(admin)* — a URL da instância (ex.: `https://portalcliente.pixeon.com`).
+4. **Minha conta** — **seu** usuário e senha do Jira. São pessoais: é com eles
    que a plataforma descobre os chamados atribuídos a você.
 
 Nada disso vive em arquivo de configuração: tudo é editável pela interface e
 vale na hora, sem reiniciar nada.
+
+---
+
+## Skills: ensinando o método do time à IA
+
+Em **Configurações → IA → Skills** existe um campo aberto. O que for colado ali
+entra no prompt da **ANALISE** e do **DESENVOLVIMENTO** de todo card, junto do
+`CLAUDE.md` do módulo e do código trazido pelo PB Insight.
+
+A divisão de trabalho entre os três é o que importa:
+
+| Fonte | Responde |
+|---|---|
+| `modules/<modulo>/CLAUDE.md` | como é o **código** daquele módulo |
+| PB Insight (RAG) | o **código em si**, no estado atual |
+| **Skill** | como o **time trabalha** — o método |
+
+Por isso a skill rende quando descreve procedimento, não código: "confirmar com
+pbtrace antes de olhar a DataWindow", "checar a constraint no banco primeiro",
+"validar sempre nos dois bancos", "nunca mexer no `w_main_frame`".
+
+Detalhes que valem saber:
+
+- É **global** — vale para todos os módulos e para todos os devs, e vai em
+  **todo card**. Coisa específica de um módulo rende mais no `CLAUDE.md` dele.
+- **Custa tokens em cada análise.** O limite é de 20.000 caracteres, e o campo
+  mostra o contador.
+- Esvaziar o campo e salvar **remove** a skill; a esteira volta a rodar como antes.
+- A skill não muda o formato de resposta dos agentes: se o texto colado pedir
+  markdown ou explicação em prosa, o contrato JSON do agente prevalece.
 
 ---
 
@@ -112,13 +145,48 @@ Monitor de Recursos avisa quando o índice está com mais de 7 dias.
 
 1. **Novo card** — cole o texto do chamado, ou digite a chave do Jira
    (`SMART-12345`) e clique no botão do Jira para puxar descrição e anexos.
+   O card pede o **sistema** (SMART Desktop ou SMART Web), não o módulo:
+   descobrir se o chamado é do ATENDE, AGENDA, MWSUS ou CADGF virou parte da
+   análise — o briefing dos quatro vai junto no prompt.
 2. A IA analisa e propõe um diff. O card caminha sozinho até **REVISÃO**.
-3. Você revisa o diff, aplica (ou não) e resolve. **Descreva o que aplicou de
-   fato** — é esse texto que alimenta a base de conhecimento e melhora as
-   análises seguintes.
+3. Você revisa o diff. Se quiser, **"Aplicar o diff no código"** manda a IA
+   escrever a alteração no seu working copy (ver abaixo) — ou aplique na mão,
+   como sempre.
+4. Resolva o card. **Descreva o que aplicou de fato** — é esse texto que
+   alimenta a base de conhecimento e melhora as análises seguintes.
 
 Chamados atribuídos a você no Jira aparecem como aviso no topo do board, com
 um botão para virar card. Nada é criado ou analisado sem o seu clique.
+
+---
+
+## Aplicar o diff no código
+
+Em **REVISÃO**, o botão **"Aplicar o diff no código"** escreve a proposta no
+working copy apontado por `SMART_DESKTOP_PATH`. É a única operação da
+plataforma que altera arquivo — e ela roda **só nesse clique**, nunca dentro do
+pipeline.
+
+O que está garantido:
+
+- **Ou aplica inteiro, ou não aplica nada.** Um `patch --dry-run` roda antes;
+  diff que não encaixa no working copy é recusado com o motivo, sem tocar em
+  arquivo nenhum.
+- **Backup de cada arquivo alterado**, num volume próprio (`applied_backups`).
+  O card mostra o que foi alterado e um botão **Desfazer alteração**.
+- **Nada de controle de versão.** O backend não commita, não cria branch e não
+  reverte nada no seu repositório: a mudança aparece como alteração local sua.
+  Continue conferindo com o `diff` do seu VCS antes de subir qualquer coisa.
+- **Nada fora do working copy.** Caminho absoluto ou com `..` no diff é
+  recusado.
+
+Aceitar a proposta e mandar aplicar são **dois botões separados**, de propósito:
+são duas decisões diferentes.
+
+O Monitor de Recursos mostra **Código (working copy)** — se aparecer
+indisponível, o `SMART_DESKTOP_PATH` não está configurado ou está montado
+somente-leitura, e o botão de aplicar vai recusar. O resto da esteira funciona
+normalmente nesse caso.
 
 ---
 
@@ -166,8 +234,11 @@ E refaça o build: `docker compose up -d --build web`.
 
 **Decisões que valem saber:**
 
-- **A IA propõe, o dev aplica.** O backend tem acesso somente-leitura ao
-  código e nunca toca no controle de versão.
+- **A IA propõe, o dev decide.** A esteira para em REVISÃO e nunca fecha um
+  chamado sozinha. Se o dev mandar, a IA escreve o diff no working copy — mas
+  só nesse clique, e **nunca no controle de versão**: nada de commit, branch ou
+  revert. A mudança aparece como alteração local do dev, que continua sendo
+  quem decide o que vai pro repositório.
 - **As chaves de IA vivem só no backend.** Nenhum dev usa a própria chave, e
   todo consumo é registrado (Monitor de Recursos → Consumo de IA).
 - **As credenciais do Jira são por usuário** e guardadas cifradas — é o que

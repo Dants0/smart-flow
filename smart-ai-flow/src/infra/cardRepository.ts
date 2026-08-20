@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import type { Card as PrismaCard, History as PrismaHistory } from '@prisma/client';
 import { prisma } from './db';
 import type {
@@ -34,6 +35,9 @@ function toDomain(row: CardRow): Card {
     traceAnalysis: (row.traceAnalysis as unknown as TraceFileAnalysis[] | null) ?? undefined,
     grounded: row.grounded,
     resolutionText: row.resolutionText ?? undefined,
+    appliedAt: row.appliedAt?.toISOString() ?? undefined,
+    appliedFiles: (row.appliedFiles as unknown as string[] | null) ?? undefined,
+    appliedBackupDir: row.appliedBackupDir ?? undefined,
     createdById: row.createdById ?? undefined,
     history: row.history
       .slice()
@@ -197,6 +201,9 @@ export async function saveCard(card: Card): Promise<void> {
         traceAnalysis: (card.traceAnalysis as unknown as object) ?? undefined,
         grounded: card.grounded ?? true,
         resolutionText: card.resolutionText ?? null,
+        appliedAt: card.appliedAt ? new Date(card.appliedAt) : null,
+        appliedFiles: (card.appliedFiles as unknown as object) ?? undefined,
+        appliedBackupDir: card.appliedBackupDir ?? null,
         createdById: card.createdById ?? null,
       },
       update: {
@@ -208,6 +215,10 @@ export async function saveCard(card: Card): Promise<void> {
         traceAnalysis: (card.traceAnalysis as unknown as object) ?? undefined,
         grounded: card.grounded ?? true,
         resolutionText: card.resolutionText ?? null,
+        // null explícito (e não undefined) porque reverter PRECISA apagar a marca
+        appliedAt: card.appliedAt ? new Date(card.appliedAt) : null,
+        appliedFiles: (card.appliedFiles as unknown as object) ?? Prisma.DbNull,
+        appliedBackupDir: card.appliedBackupDir ?? null,
       },
     }),
     prisma.history.deleteMany({ where: { cardId: card.id } }),

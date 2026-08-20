@@ -6,6 +6,18 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3333";
 /** Rotas públicas — não mandam token e não redirecionam em 401. */
 const PUBLIC_PATHS = ["/auth/login", "/auth/status", "/auth/bootstrap"];
 
+/** Erro de API que preserva o `code` — a UI decide o que mostrar por ele, não pela mensagem. */
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly code?: string,
+  ) {
+    super(message);
+    this.name = "ApiError";
+  }
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const isPublic = PUBLIC_PATHS.some((p) => path.startsWith(p));
   const token = getToken();
@@ -27,7 +39,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error(body.error ?? `Erro ${res.status} em ${path}`);
+    throw new ApiError(body.error ?? `Erro ${res.status} em ${path}`, res.status, body.code);
   }
   return res.status === 204 ? (undefined as T) : res.json();
 }
@@ -48,6 +60,28 @@ export function bootstrapAdmin(input: {
   password: string;
 }): Promise<AuthUser> {
   return request("/auth/bootstrap", { method: "POST", body: JSON.stringify(input) });
+}
+
+export interface JiraConnectionTest {
+  username: string;
+  displayName: string;
+  /** Quantos chamados a JQL configurada devolve. null = a consulta falhou. */
+  assignedCount: number | null;
+  jqlError?: string;
+  latencyMs: number;
+}
+
+/**
+ * Testa a credencial guardada contra o Jira agora. Também libera o bloqueio
+ * antes de tentar — clicar em testar é dizer "corrigi, tenta de novo".
+ */
+export function testJiraConnection(): Promise<JiraConnectionTest> {
+  return request("/me/jira/test", { method: "POST" });
+}
+
+/** "Destravei o CAPTCHA no navegador, pode voltar a consultar o Jira." */
+export function unblockJira(): Promise<AuthUser> {
+  return request("/me/jira/unblock", { method: "POST" });
 }
 
 export function getMe(): Promise<AuthUser> {
@@ -180,6 +214,20 @@ export function retryCard(id: string, traceProvider?: TraceProviderInput): Promi
   });
 }
 
+/**
+ * REVISAO: manda a IA escrever o diff proposto no working copy do SMART Desktop.
+ * 422 quando o diff não aplica limpo ou o working copy não está gravável — e aí
+ * nada foi alterado no código.
+ */
+export function applyCardDiff(id: string): Promise<Card> {
+  return request(`/cards/${id}/apply`, { method: "POST" });
+}
+
+/** Desfaz o apply restaurando os arquivos do backup. */
+export function revertCardDiff(id: string): Promise<Card> {
+  return request(`/cards/${id}/revert`, { method: "POST" });
+}
+
 export function deleteCard(id: string): Promise<void> {
   return request(`/cards/${id}`, { method: "DELETE" });
 }
@@ -194,6 +242,8 @@ export interface PlatformSettingsView {
   jiraBaseUrl: string | null;
   jiraAssignedJql: string;
   pbInsightUrl: string;
+  /** Skill do time colada em Configurações > IA. null = nenhuma configurada. */
+  skills: string | null;
   updatedAt: string;
 }
 
@@ -207,6 +257,7 @@ export type PlatformSettingsPatch = Partial<{
   jiraBaseUrl: string;
   jiraAssignedJql: string;
   pbInsightUrl: string;
+  skills: string;
 }>;
 
 export function getSettings(): Promise<PlatformSettingsView> {

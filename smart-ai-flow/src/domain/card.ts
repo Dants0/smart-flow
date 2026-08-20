@@ -57,6 +57,13 @@ export interface Card {
   grounded?: boolean;
   /** O que o dev REALMENTE aplicou — pode divergir do diff proposto pela IA. */
   resolutionText?: string;
+
+  /** Quando o diff foi escrito no working copy (ação do dev em REVISAO). */
+  appliedAt?: string;
+  /** Arquivos alterados pelo apply, relativos à raiz do working copy. */
+  appliedFiles?: string[];
+  /** Backup dos arquivos antes do apply — é o que permite reverter pela UI. */
+  appliedBackupDir?: string;
   createdById?: string;
 
   history: HistoryEntry[];

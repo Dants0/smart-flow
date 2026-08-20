@@ -1,7 +1,9 @@
-import { callLlm } from '../infra/llm';
+import { callJsonAgent } from './jsonCall';
 import { retrieveContext } from '../infra/pbInsight';
 import { loadModuleContext } from '../infra/moduleContext';
-import { ProposerOutputSchema, parseAgentOutput, type ProposerOutput } from './contracts';
+import { getSettings } from '../infra/settingsRepository';
+import { buildSkillSection } from '../domain/skill';
+import { ProposerOutputSchema, type ProposerOutput } from './contracts';
 import type { Card } from '../domain/card';
 import type { LlmResult } from '../infra/llm';
 
@@ -34,6 +36,7 @@ export async function runProposal(card: Card): Promise<ProposalResult> {
   }
 
   const moduleContext = await loadModuleContext(card.module);
+  const { skills } = await getSettings(); // skill do time (Configurações > IA)
   const { text: retrieved } = await retrieveContext(card.module, card.analysis.rootCause);
 
   const userPrompt = [
@@ -50,11 +53,13 @@ export async function runProposal(card: Card): Promise<ProposalResult> {
     retrieved,
   ].join('\n');
 
-  const result = await callLlm({
-    system: SYSTEM,
+  const { output, usage } = await callJsonAgent(ProposerOutputSchema, {
+    system: SYSTEM + buildSkillSection(skills),
     userText: userPrompt,
-    maxTokens: 4000,
+    // diff grande com contexto cabe mal em 4000 — o corte aparecia como JSON
+    // inválido, não como 'proposta incompleta'
+    maxTokens: 8000,
   });
 
-  return { output: parseAgentOutput(ProposerOutputSchema, result.text), usage: result };
+  return { output, usage };
 }

@@ -3,7 +3,12 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { createCard } from '../domain/card';
 import { resolve, requestNewProposal, retryFromError } from '../orchestrator/orchestrator';
-import { fetchJiraIssue, searchAssignedIssues } from '../infra/jiraService';
+import {
+  fetchJiraIssue,
+  searchAssignedIssues,
+  testJiraConnection,
+  JiraAuthError,
+} from '../infra/jiraService';
 import {
   findAllJiraKeys,
   findCardById,
@@ -18,8 +23,10 @@ import { promoteResolvedTicket } from '../infra/pbInsight';
 import { checkResources } from '../infra/monitor';
 import { enqueueAdvance, queueStats } from '../infra/jobQueue';
 import { usageSummary } from '../infra/runRepository';
+import { applyDiff, revertDiff, WorkspaceError } from '../infra/workspace';
 import {
   authenticate,
+  clearJiraAuthBlock,
   countUsers,
   createUser,
   deleteUser,
@@ -233,6 +240,86 @@ export async function routes(app: FastifyInstance) {
       return next;
     });
 
+    /**
+     * REVISAO: o dev aceitou a proposta e manda a IA escrever o diff no working
+     * copy. Só aqui o backend deixa de ser só-leitura, e só por ação humana.
+     * Não commita nada: a mudança aparece como alteração local no SVN do dev.
+     */
+    secured.post('/cards/:id/apply', async (req, reply) => {
+      const card = await findCardById((req.params as { id: string }).id);
+      if (!card) return reply.code(404).send({ error: 'não encontrado' });
+      if (card.stage !== 'REVISAO') {
+        return reply.code(400).send({ error: 'só dá pra aplicar o diff em REVISAO' });
+      }
+      if (!card.proposal?.diff) {
+        return reply.code(400).send({ error: 'o card não tem diff proposto' });
+      }
+      if (card.appliedAt) {
+        return reply.code(409).send({ error: 'este diff já foi aplicado — reverta antes de aplicar de novo' });
+      }
+
+      try {
+        const result = await applyDiff(card.id, card.proposal.diff);
+        const applied = {
+          ...card,
+          appliedAt: new Date().toISOString(),
+          appliedFiles: result.files,
+          appliedBackupDir: result.backupDir,
+          history: [
+            ...card.history,
+            {
+              from: card.stage,
+              to: card.stage,
+              by: 'DEV' as const,
+              userId: currentUserId(req),
+              at: new Date().toISOString(),
+              note: `diff aplicado no código (${result.files.length} arquivo(s): ${result.files.join(', ')})`,
+            },
+          ],
+        };
+        await saveCard(applied);
+        return applied;
+      } catch (err) {
+        if (err instanceof WorkspaceError) return reply.code(422).send({ error: err.message });
+        throw err;
+      }
+    });
+
+    /** Desfaz o apply pelo backup. O card continua em REVISAO, como antes. */
+    secured.post('/cards/:id/revert', async (req, reply) => {
+      const card = await findCardById((req.params as { id: string }).id);
+      if (!card) return reply.code(404).send({ error: 'não encontrado' });
+      if (!card.appliedAt || !card.appliedBackupDir || !card.appliedFiles?.length) {
+        return reply.code(400).send({ error: 'este card não tem alteração aplicada' });
+      }
+
+      try {
+        await revertDiff(card.appliedBackupDir, card.appliedFiles);
+        const reverted = {
+          ...card,
+          appliedAt: undefined,
+          appliedFiles: undefined,
+          appliedBackupDir: undefined,
+          history: [
+            ...card.history,
+            {
+              from: card.stage,
+              to: card.stage,
+              by: 'DEV' as const,
+              userId: currentUserId(req),
+              at: new Date().toISOString(),
+              note: `alteração revertida (${card.appliedFiles.length} arquivo(s) restaurados)`,
+            },
+          ],
+        };
+        await saveCard(reverted);
+        return reverted;
+      } catch (err) {
+        if (err instanceof WorkspaceError) return reply.code(422).send({ error: err.message });
+        throw err;
+      }
+    });
+
     secured.post('/cards/:id/retry', async (req, reply) => {
       const body = parseBody(RetryCardSchema, req, reply);
       if (!body) return;
@@ -289,11 +376,52 @@ export async function routes(app: FastifyInstance) {
         ]);
         return assigned.filter((i) => !knownKeys.has(i.key) && !dismissed.has(i.key));
       } catch (err) {
+        // Negação de auth não é indisponibilidade: o backend já parou de tentar,
+        // e o front precisa mostrar o que fazer em vez de ignorar como ruído.
+        if (err instanceof JiraAuthError) {
+          return reply.code(428).send({ code: 'JIRA_AUTH_BLOCKED', error: err.message });
+        }
         return reply.code(502).send({
           code: 'JIRA_UNAVAILABLE',
           error: err instanceof Error ? err.message : 'falha ao consultar o Jira',
         });
       }
+    });
+
+    /**
+     * "Destravei no navegador, pode tentar de novo." Regravar a senha em
+     * Minha conta também libera — este endpoint é pra quem só precisou resolver
+     * o CAPTCHA, sem trocar credencial.
+     */
+    /**
+     * Testa a credencial guardada contra o Jira, na hora. Antes disto, o dev
+     * salvava a senha e só descobria se funcionou quando o board consultasse —
+     * um minuto depois, e sem dizer o que falhou.
+     *
+     * Libera o bloqueio antes de tentar: clicar em testar É a forma explícita de
+     * dizer "corrigi, tenta de novo". Se o Jira negar outra vez, o disjuntor
+     * arma de novo no mesmo instante.
+     */
+    secured.post('/me/jira/test', async (req, reply) => {
+      const userId = currentUserId(req);
+      await clearJiraAuthBlock(userId);
+
+      try {
+        return await testJiraConnection(userId);
+      } catch (err) {
+        if (err instanceof JiraAuthError) {
+          return reply.code(428).send({ code: 'JIRA_AUTH_BLOCKED', error: err.message });
+        }
+        return reply.code(502).send({
+          code: 'JIRA_UNAVAILABLE',
+          error: err instanceof Error ? err.message : 'falha ao falar com o Jira',
+        });
+      }
+    });
+
+    secured.post('/me/jira/unblock', async (req) => {
+      await clearJiraAuthBlock(currentUserId(req));
+      return findUserById(currentUserId(req));
     });
 
     secured.post('/jira/pending/:key/dismiss', async (req, reply) => {
@@ -305,6 +433,9 @@ export async function routes(app: FastifyInstance) {
       try {
         return await fetchJiraIssue(currentUserId(req), (req.params as { key: string }).key);
       } catch (err) {
+        if (err instanceof JiraAuthError) {
+          return reply.code(428).send({ code: 'JIRA_AUTH_BLOCKED', error: err.message });
+        }
         return reply
           .code(502)
           .send({ error: err instanceof Error ? err.message : 'falha ao buscar do Jira' });
@@ -325,6 +456,7 @@ export async function routes(app: FastifyInstance) {
         jiraBaseUrl: s.jiraBaseUrl,
         jiraAssignedJql: s.jiraAssignedJql,
         pbInsightUrl: s.pbInsightUrl,
+        skills: s.skills,
         updatedAt: s.updatedAt,
       };
     });
@@ -347,6 +479,7 @@ export async function routes(app: FastifyInstance) {
         jiraBaseUrl: updated.jiraBaseUrl,
         jiraAssignedJql: updated.jiraAssignedJql,
         pbInsightUrl: updated.pbInsightUrl,
+        skills: updated.skills,
         updatedAt: updated.updatedAt,
       };
     });

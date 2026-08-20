@@ -1,5 +1,6 @@
 import { Stage, isAutomatic } from '../domain/stages';
 import { moveCard, type Card } from '../domain/card';
+import { AgentOutputError } from '../agents/contracts';
 import { runAnalysis } from '../agents/analyzer';
 import { runProposal } from '../agents/proposer';
 import { analyzeTraces, type TraceProviderOverride } from '../infra/traceService';
@@ -34,7 +35,15 @@ export async function advance(
       await persist(current);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'falha desconhecida';
-      await recordRun({ cardId: current.id, stage: stageBefore, ok: false, errorMessage: message });
+      // Falha de contrato guarda a resposta crua: sem isso a linha em Run dizia
+      // só "JSON inválido" e não sobrava com que investigar depois.
+      const raw = err instanceof AgentOutputError ? `\n--- resposta do modelo ---\n${err.raw.slice(0, 2000)}` : '';
+      await recordRun({
+        cardId: current.id,
+        stage: stageBefore,
+        ok: false,
+        errorMessage: message + raw,
+      });
       current = moveCard(current, Stage.ERRO, 'IA', message);
       await persist(current);
       break;

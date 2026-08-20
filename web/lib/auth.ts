@@ -10,6 +10,11 @@ export interface AuthUser {
   mustChangePassword: boolean;
   /** Pendências de setup inicial — a UI cobra até ficarem vazias. */
   setupPending: SetupStep[];
+  /**
+   * Preenchido quando o Jira negou a autenticação (CAPTCHA/401) e o backend
+   * parou de tentar. Insistir rearmaria o bloqueio na conta do dev no Jira.
+   */
+  jiraAuthBlocked?: { at: string; reason: string };
 }
 
 const TOKEN_KEY = "smart-ai-flow:token";

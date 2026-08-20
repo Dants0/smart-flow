@@ -2,6 +2,7 @@
 
 import { LuSearch, LuX } from "react-icons/lu";
 import type { CardFilters } from "@/lib/api";
+import { systemLabel } from "@/lib/systems";
 
 /** Janelas pra coluna RESOLVIDO, que cresce indefinidamente. */
 const WINDOWS = [
@@ -38,10 +39,10 @@ export function BoardFilters({
         onChange={(e) => onChange({ ...filters, module: e.target.value || undefined })}
         className="rounded-md border border-zinc-300 px-2.5 py-1.5 text-sm text-zinc-700 outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
       >
-        <option value="">Todos os módulos</option>
+        <option value="">Todos os sistemas</option>
         {modules.map((m) => (
           <option key={m} value={m}>
-            {m}
+            {systemLabel(m)}
           </option>
         ))}
       </select>

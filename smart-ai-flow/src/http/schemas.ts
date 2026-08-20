@@ -1,10 +1,22 @@
 import { z } from 'zod';
+import { MAX_SKILL_CHARS } from '../domain/skill';
 
 /**
  * Validação de entrada das rotas. Antes era `req.body as any` em tudo —
  * um `module` inválido só aparecia lá na frente, como CLAUDE.md faltando.
  */
-export const MODULES = ['smartweb', 'atende', 'agenda', 'mwsus', 'cadgf'] as const;
+
+/**
+ * Sistema alvo do card. ATENDE, AGENDA, MWSUS e CADGF não aparecem aqui de
+ * propósito: são módulos acoplados DENTRO do SMART Desktop, e obrigar o dev a
+ * escolher um deles no card era pedir uma classificação que o chamado nem
+ * sempre traz. Escolhido o SMART Desktop, o briefing dos quatro entra junto
+ * (ver infra/moduleContext.ts).
+ *
+ * Cards antigos gravados com 'atende', 'agenda', 'mwsus' ou 'cadgf' continuam
+ * válidos na leitura — isto valida só a criação.
+ */
+export const MODULES = ['smartdesktop', 'smartweb'] as const;
 
 const CardImageSchema = z.object({
   name: z.string(),
@@ -74,6 +86,17 @@ export const UpdateSettingsSchema = z.object({
   jiraBaseUrl: z.string().url().optional(),
   jiraAssignedJql: z.string().optional(),
   pbInsightUrl: z.string().url().optional(),
+  // Texto livre — a skill é procedimento humano, não tem formato a validar. O
+  // limite existe só pra proteger o prompt: ela entra em TODA análise e
+  // proposta, então um texto gigante custa tokens em cada card e empurra o
+  // contexto de código (RAG) pra fora da janela.
+  skills: z
+    .string()
+    .max(
+      MAX_SKILL_CHARS,
+      `a skill passa de ${MAX_SKILL_CHARS.toLocaleString('pt-BR')} caracteres — resuma o procedimento, ela entra em todo card`,
+    )
+    .optional(),
 });
 
 /** Erro de validação com mensagem legível em vez de dump do Zod. */
