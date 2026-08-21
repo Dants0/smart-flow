@@ -8,6 +8,8 @@ import {
   LuExternalLink,
   LuBot,
   LuUser,
+  LuMessageSquare,
+  LuFileCode,
 } from "react-icons/lu";
 import { SiJira } from "react-icons/si";
 import { getCard, getSettings } from "@/lib/api";
@@ -18,20 +20,24 @@ import { timeAgo } from "@/lib/time";
 import { systemLabel } from "@/lib/systems";
 import { AuthGuard } from "@/components/AuthGuard";
 import { ThemeToggle } from "@/components/ThemeToggle";
-import { CardContent } from "@/components/card/CardContent";
+import { ChangePlan } from "@/components/card/ChangePlan";
+import { CardEvidence } from "@/components/card/CardEvidence";
+import { CardChat } from "@/components/card/CardChat";
 import { CardActions } from "@/components/card/CardActions";
 
 /**
- * Página inteira do card, aberta pelo número do chamado numa aba nova.
+ * Revisão completa do chamado.
  *
- * Existe porque o painel lateral do board tem 36rem: chamado com print, log de
- * trace, análise e diff não cabe ali sem virar rolagem sem fim. Aqui a leitura é
- * confortável e a aba fica aberta enquanto o dev trabalha no código — o board
- * continua vivo na aba anterior.
+ * A pergunta que esta tela responde, nesta ordem: **o que muda**, **onde muda**,
+ * **por quê** — e só então a evidência (chamado, raciocínio, histórico), ao lado
+ * e recolhida. A versão anterior era um scroll único que empurrava o diff pro
+ * meio do caminho.
+ *
+ * As ações do gate ficam numa barra fixa embaixo: decidir não pode depender de
+ * ter rolado até o fim.
  */
 export default function CardPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
-
   return <AuthGuard>{() => <CardPageContent id={id} />}</AuthGuard>;
 }
 
@@ -39,12 +45,12 @@ function CardPageContent({ id }: { id: string }) {
   const [card, setCard] = useState<Card | null>(null);
   const [jiraBaseUrl, setJiraBaseUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [aside, setAside] = useState<"evidencia" | "chat">("evidencia");
 
   useEffect(() => {
     getCard(id)
       .then(setCard)
       .catch((err) => setError(err instanceof Error ? err.message : "falha ao carregar o card"));
-    // link pro Jira depende da URL da instância, que é configuração global
     getSettings()
       .then((s) => setJiraBaseUrl(s.jiraBaseUrl))
       .catch(() => {});
@@ -78,10 +84,11 @@ function CardPageContent({ id }: { id: string }) {
   const Icon = meta.icon;
   const owner = STAGE_OWNER[card.stage];
   const OwnerIcon = owner === "IA" ? LuBot : LuUser;
+  const hasActions = card.stage === "REVISAO" || card.stage === "ERRO";
 
   return (
     <div className="flex h-full flex-col bg-zinc-50 dark:bg-black">
-      <header className="flex flex-wrap items-center gap-3 border-b border-zinc-200 bg-white px-6 py-4 dark:border-zinc-800 dark:bg-zinc-950">
+      <header className="flex flex-wrap items-center gap-3 border-b border-zinc-200 bg-white px-6 py-3 dark:border-zinc-800 dark:bg-zinc-950">
         <Link
           href="/"
           className="flex items-center gap-1.5 rounded-md px-2 py-1.5 text-sm font-medium text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-800 dark:hover:bg-zinc-900 dark:hover:text-zinc-200"
@@ -110,7 +117,6 @@ function CardPageContent({ id }: { id: string }) {
         </div>
 
         <div className="ml-auto flex items-center gap-2">
-          {/* Atalho pro chamado no Jira: comentários e anexos que não vieram pro card estão lá. */}
           {jiraBaseUrl && (
             <a
               href={`${jiraBaseUrl.replace(/\/$/, "")}/browse/${card.jiraKey}`}
@@ -127,20 +133,79 @@ function CardPageContent({ id }: { id: string }) {
         </div>
       </header>
 
-      <main className="flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-4xl px-6 py-6">
-          <div className="rounded-xl border border-zinc-200 bg-white p-6 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
-            <CardContent card={card} />
+      <div className="flex flex-1 overflow-hidden">
+        {/* Coluna principal: o plano de mudança. */}
+        <main className="flex-1 overflow-y-auto">
+          <div className="mx-auto max-w-3xl px-6 py-6">
+            <div className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+              <ChangePlan card={card} />
+            </div>
+          </div>
+        </main>
+
+        {/*
+          Coluna de apoio, com duas abas: a evidência (de onde a proposta saiu) e
+          o chat. Ficam no mesmo espaço porque o dev usa uma de cada vez —
+          confere a análise, ou pergunta sobre ela.
+        */}
+        <aside className="hidden w-[26rem] shrink-0 flex-col border-l border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-950 lg:flex">
+          <div className="flex shrink-0 gap-1 border-b border-zinc-200 px-3 pt-3 dark:border-zinc-800">
+            {(
+              [
+                ["evidencia", "Evidência", LuFileCode],
+                ["chat", "Perguntar", LuMessageSquare],
+              ] as const
+            ).map(([key, label, TabIcon]) => (
+              <button
+                key={key}
+                onClick={() => setAside(key)}
+                className={`flex items-center gap-1.5 rounded-t-lg px-3 py-2 text-xs font-medium transition ${
+                  aside === key
+                    ? "bg-white text-zinc-900 shadow-sm dark:bg-zinc-900 dark:text-zinc-100"
+                    : "text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300"
+                }`}
+              >
+                <TabIcon className="size-3.5" />
+                {label}
+              </button>
+            ))}
           </div>
 
-          {/* Mesmas ações do painel: quem lê aqui precisa poder decidir aqui. */}
-          {(card.stage === "REVISAO" || card.stage === "ERRO") && (
-            <div className="mt-4 overflow-hidden rounded-xl border border-zinc-200 bg-white py-1 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
-              <CardActions card={card} onUpdated={setCard} />
+          {aside === "evidencia" ? (
+            <div className="flex-1 overflow-y-auto p-3">
+              <CardEvidence card={card} />
+            </div>
+          ) : (
+            <div className="flex-1 overflow-hidden bg-white dark:bg-zinc-900">
+              <CardChat cardId={card.id} />
             </div>
           )}
+        </aside>
+      </div>
+
+      {/* Em telas estreitas a coluna some: evidência e chat viram blocos no fim. */}
+      <div className="border-t border-zinc-200 bg-white lg:hidden dark:border-zinc-800 dark:bg-zinc-900">
+        <details className="px-6 py-3">
+          <summary className="cursor-pointer text-xs font-semibold uppercase tracking-wide text-zinc-500">
+            Evidência e perguntas
+          </summary>
+          <div className="mt-3 flex flex-col gap-4">
+            <CardEvidence card={card} />
+            <div className="h-96 overflow-hidden rounded-xl border border-zinc-200 dark:border-zinc-800">
+              <CardChat cardId={card.id} />
+            </div>
+          </div>
+        </details>
+      </div>
+
+      {/* Barra de decisão: sempre visível, sem depender de rolagem. */}
+      {hasActions && (
+        <div className="shrink-0 border-t border-zinc-200 bg-white shadow-[0_-4px_12px_-8px_rgba(0,0,0,0.2)] dark:border-zinc-800 dark:bg-zinc-900">
+          <div className="mx-auto max-w-3xl">
+            <CardActions card={card} onUpdated={setCard} />
+          </div>
         </div>
-      </main>
+      )}
     </div>
   );
 }

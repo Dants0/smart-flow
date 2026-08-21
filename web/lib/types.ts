@@ -100,6 +100,8 @@ export interface Card {
   jiraKey: string;
   module: string;
   rawTicket: string;
+  /** O que o dev já sabia ao abrir o card. */
+  devHints?: string;
   images?: CardImage[];
   traceFiles?: CardTraceFile[];
   stage: Stage;
@@ -108,6 +110,8 @@ export interface Card {
   traceAnalysis?: TraceFileAnalysis[];
   /** false = a análise rodou sem trecho real de código (pb-insight indisponível). */
   grounded?: boolean;
+  /** Caminhos citados no diff que não existem no repositório. */
+  unknownPaths?: string[];
   /** O que o dev realmente aplicou — vai pra base de conhecimento no RESOLVIDO. */
   resolutionText?: string;
   /** Quando a IA escreveu o diff no working copy (ação do dev em REVISAO). */

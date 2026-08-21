@@ -25,6 +25,7 @@ export function NewCardModal({
   const [jiraKey, setJiraKey] = useState(initialJiraKey ?? "");
   const [module, setModule] = useState<string>(SYSTEMS[0].value);
   const [rawTicket, setRawTicket] = useState("");
+  const [devHints, setDevHints] = useState("");
   const [images, setImages] = useState<CardImage[]>([]);
   const [traceFiles, setTraceFiles] = useState<CardTraceFile[]>([]);
   const [jiraFetching, setJiraFetching] = useState(false);
@@ -118,7 +119,15 @@ export function NewCardModal({
         }
       : undefined;
 
-    createCard({ jiraKey, module, rawTicket, images, traceFiles, traceProvider })
+    createCard({
+      jiraKey,
+      module,
+      rawTicket,
+      devHints: devHints.trim() || undefined,
+      images,
+      traceFiles,
+      traceProvider,
+    })
       .then(onCreated)
       .catch((err) => onError(err instanceof Error ? err.message : "falha ao criar card"));
 
@@ -200,6 +209,31 @@ export function NewCardModal({
               rows={7}
               className="resize-none rounded-md border border-zinc-300 px-3 py-2 text-sm text-zinc-800 outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
             />
+          </label>
+
+          {/*
+            O que o dev já sabe. É a única parte do prompt escrita por alguém com
+            o sistema na frente — e além de ir pro texto, direciona a BUSCA: citar
+            `d_agm09tab` faz a plataforma abrir esse objeto no repositório.
+          */}
+          <label className="flex flex-col gap-1 text-xs font-medium text-zinc-500">
+            O que você já sabe <span className="font-normal text-zinc-400">(opcional)</span>
+            <textarea
+              value={devHints}
+              onChange={(e) => setDevHints(e.target.value)}
+              placeholder={
+                "Direcione a análise: objeto suspeito, DataWindow, query, o que já foi descartado.\n\n" +
+                "Ex: acho que é a d_agm09tab — o WHERE não amarra a OS.\n" +
+                "Ex: SELECT ... FROM pac WHERE pac_reg = :nPacReg retorna 2 linhas na base do cliente.\n" +
+                "Ex: já conferi o INI CON_MED_FL, está como 'S'."
+              }
+              rows={4}
+              className="resize-none rounded-md border border-zinc-300 px-3 py-2 text-sm text-zinc-800 outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+            />
+            <span className="font-normal leading-relaxed text-zinc-400">
+              A IA trata isto como <strong>evidência</strong>, não palpite — e usa os nomes que
+              você citar para abrir esses objetos no repositório.
+            </span>
           </label>
 
           <div className="flex flex-col gap-2">

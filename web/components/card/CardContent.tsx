@@ -208,7 +208,9 @@ export function CardContent({ card }: { card: Card }) {
 
           {card.analysis.needsTrace && (
             <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">
-              Esta análise pede um pbtrace antes de propor o diff.
+              Um pbtrace deixaria esta análise mais firme — anexe e reprocesse se o
+              cenário permitir. (Não impede a proposta: a esteira segue com o código
+              que encontrou no repositório.)
             </p>
           )}
         </section>
@@ -223,6 +225,27 @@ export function CardContent({ card }: { card: Card }) {
           <p className="mb-2 text-sm font-medium text-zinc-700 dark:text-zinc-300">
             {card.proposal.summary}
           </p>
+
+          {/*
+            Diff que cita arquivo inexistente é o pior tipo de erro desta
+            plataforma: parece pronto e só se revela ficção quando o dev vai
+            aplicar. O aviso vem ANTES do diff, não depois.
+          */}
+          {!!card.unknownPaths?.length && (
+            <div className="mb-2 flex items-start gap-2 rounded-lg border border-red-300 bg-red-50 p-3 text-xs leading-relaxed text-red-800 dark:border-red-800 dark:bg-red-950/40 dark:text-red-300">
+              <LuTriangleAlert className="mt-0.5 size-4 shrink-0" />
+              <span>
+                <strong>Esta proposta cita arquivos que não existem no repositório.</strong>{' '}
+                O modelo provavelmente deduziu caminhos em vez de usar código real — trate o
+                diff como hipótese, não como correção. Caminhos não encontrados:
+                <ul className="mt-1 space-y-0.5 font-mono">
+                  {card.unknownPaths.map((p) => (
+                    <li key={p}>{p}</li>
+                  ))}
+                </ul>
+              </span>
+            </div>
+          )}
 
           <DiffView diff={card.proposal.diff} />
 

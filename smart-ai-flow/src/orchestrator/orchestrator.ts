@@ -5,6 +5,7 @@ import { runAnalysis } from '../agents/analyzer';
 import { runProposal } from '../agents/proposer';
 import { analyzeTraces, type TraceProviderOverride } from '../infra/traceService';
 import { recordRun } from '../infra/runRepository';
+import { gatherSourceMaterial } from '../infra/sourceExcerpts';
 import type { LlmResult } from '../infra/llm';
 
 /**
@@ -90,14 +91,48 @@ async function runStage(card: Card, traceProvider?: TraceProviderOverride): Prom
       await logUsage(card.id, Stage.ANALISE, usage);
 
       const withAnalysis = { ...withTrace, analysis, grounded };
+
+      /*
+       * O que decide se dá pra propor é MATERIAL, não trace.
+       *
+       * A primeira versão deste gate olhava `needsTrace`, e estava errada por
+       * dois motivos: nem todo chamado tem pbtrace, e o modelo usa esse campo
+       * como "faltou alguma coisa" mesmo quando o que falta é CÓDIGO. No
+       * SMART-50927 ele pediu trace quando precisava, na verdade, ler o evento
+       * `avancar` de 4 janelas — que a plataforma acha num `git grep`.
+       *
+       * Então: buscamos o código dos objetos que a análise apontou. Com material,
+       * segue pra proposta (com ou sem trace). Sem material, para em REVISAO
+       * dizendo exatamente o que não foi encontrado.
+       */
+      const material = await gatherSourceMaterial(
+        card.module,
+        analysis.affectedObjects.map((o) => o.name),
+        [card.devHints ?? '', card.rawTicket, analysis.rootCause, ...analysis.reasoning].join('\n'),
+      );
+
+      if (material.excerpts.length === 0) {
+        const faltando = material.notFound.length
+          ? ` Não encontrei no repositório: ${material.notFound.join(', ')}.`
+          : '';
+        return moveCard(
+          withAnalysis,
+          Stage.REVISAO,
+          'IA',
+          `análise concluída, mas sem código real dos objetos citados não dá pra propor diff.${faltando}`,
+        );
+      }
+
       return moveCard(withAnalysis, Stage.DESENVOLVIMENTO, 'IA', analysis.rootCause);
     }
 
     case Stage.DESENVOLVIMENTO: {
-      const { output: proposal, usage } = await runProposal(card);
+      const { output: proposal, usage, unknownPaths } = await runProposal(card);
       await logUsage(card.id, Stage.DESENVOLVIMENTO, usage);
 
-      const withProposal = { ...card, proposal };
+      // Caminho inventado não derruba o card: vira aviso na tela. Barrar aqui
+      // jogaria fora uma análise que pode estar certa mesmo com o diff errado.
+      const withProposal = { ...card, proposal, unknownPaths };
       // para aqui: REVISAO é gate humano
       return moveCard(withProposal, Stage.REVISAO, 'IA', proposal.summary);
     }

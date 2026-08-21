@@ -1,11 +1,12 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { classifyPath, type PathKind } from './workspace';
+import { classifyPathFor, repoForModule, withCompanions, type PathKind, type RepoConfig } from './repos';
 
 const exec = promisify(execFile);
 
 /**
- * Operações de git no working copy do SMART Desktop.
+ * Operações de git no working copy do repositório do card (SMART Desktop ou
+ * SMART Web).
  *
  * Regras que o repositório do time impõe e que este módulo faz cumprir:
  *
@@ -19,8 +20,6 @@ const exec = promisify(execFile);
  *    trocar de branch com árvore suja destruiria trabalho de quem está na máquina.
  */
 
-const WORKSPACE_ROOT = process.env.SMART_DESKTOP_PATH || '';
-
 export class GitError extends Error {}
 
 /**
@@ -32,10 +31,10 @@ export function redactUrlCredentials(text: string): string {
   return text.replace(/(https?:\/\/)[^@\s/]+@/gi, '$1***@');
 }
 
-async function git(args: string[], timeoutMs = 60_000): Promise<string> {
-  if (!WORKSPACE_ROOT) throw new GitError('SMART_DESKTOP_PATH não configurado');
+async function git(repo: RepoConfig, args: string[], timeoutMs = 60_000): Promise<string> {
+  if (!repo.root) throw new GitError(`caminho do ${repo.label} não configurado`);
   try {
-    const { stdout } = await exec('git', args, { cwd: WORKSPACE_ROOT, timeout: timeoutMs });
+    const { stdout } = await exec('git', args, { cwd: repo.root, timeout: timeoutMs });
     return stdout.trim();
   } catch (err) {
     const e = err as { stdout?: string; stderr?: string; message?: string };
@@ -76,13 +75,15 @@ export interface VersioningPreview {
  * pode ter sido revertido à mão depois, e aí não há o que commitar.
  */
 export async function previewCommit(
+  module: string,
   jiraKey: string,
   appliedFiles: string[],
 ): Promise<VersioningPreview> {
+  const repo = repoForModule(module);
   const [currentBranch, remoteUrl, statusOut] = await Promise.all([
-    git(['branch', '--show-current']),
-    git(['remote', 'get-url', 'origin']).catch(() => ''),
-    git(['status', '--porcelain']),
+    git(repo, ['branch', '--show-current']),
+    git(repo, ['remote', 'get-url', 'origin']).catch(() => ''),
+    git(repo, ['status', '--porcelain']),
   ]);
 
   const dirty = new Map<string, string>();
@@ -92,9 +93,12 @@ export async function previewCommit(
     dirty.set(line.slice(3).trim().replace(/^"|"$/g, ''), line.slice(0, 2).trim());
   }
 
-  const applied = new Set(appliedFiles);
-  const files: FileToCommit[] = appliedFiles.map((path) => {
-    const kind = classifyPath(path);
+  // O .prp do smart_web entra junto do .sru: commitar um sem o outro deixa o
+  // objeto inconsistente no PR, e é erro silencioso.
+  const candidates = withCompanions(repo, appliedFiles);
+  const applied = new Set(candidates);
+  const files: FileToCommit[] = candidates.map((path) => {
+    const kind = classifyPathFor(repo, path);
     return {
       path,
       kind,
@@ -118,6 +122,8 @@ export async function previewCommit(
 }
 
 export interface CommitInput {
+  /** Módulo do card — decide em qual repositório o commit acontece. */
+  module: string;
   jiraKey: string;
   /** Exatamente o que o dev confirmou na tela. */
   files: string[];
@@ -140,14 +146,15 @@ export function commitMessage(jiraKey: string, summary?: string): string {
 export async function commitFiles(input: CommitInput): Promise<{ hash: string }> {
   if (input.files.length === 0) throw new GitError('nenhum arquivo selecionado pro commit');
 
-  const forbidden = input.files.filter((f) => classifyPath(f) === 'proibido');
+  const repo = repoForModule(input.module);
+  const forbidden = input.files.filter((f) => classifyPathFor(repo, f) === 'proibido');
   if (forbidden.length > 0) {
     throw new GitError(
       `artefato de build não entra em commit: ${forbidden.join(', ')} — nada foi commitado`,
     );
   }
 
-  const branch = await git(['branch', '--show-current']);
+  const branch = await git(repo, ['branch', '--show-current']);
   if (branch !== branchForTicket(input.jiraKey)) {
     throw new GitError(
       `o working copy está em "${branch}", e não em "${branchForTicket(input.jiraKey)}" — ` +
@@ -156,8 +163,8 @@ export async function commitFiles(input: CommitInput): Promise<{ hash: string }>
   }
 
   // -- pathspec: nome de arquivo do PB tem espaço e acento à vontade
-  await git(['add', '--', ...input.files]);
-  await git([
+  await git(repo, ['add', '--', ...input.files]);
+  await git(repo, [
     '-c',
     `user.name=${input.authorName}`,
     '-c',
@@ -170,7 +177,7 @@ export async function commitFiles(input: CommitInput): Promise<{ hash: string }>
     ...input.files,
   ]);
 
-  return { hash: await git(['rev-parse', 'HEAD']) };
+  return { hash: await git(repo, ['rev-parse', 'HEAD']) };
 }
 
 /**
@@ -181,10 +188,12 @@ export async function commitFiles(input: CommitInput): Promise<{ hash: string }>
  * `redactUrlCredentials` antes de sair deste módulo.
  */
 export async function pushBranch(
+  module: string,
   branch: string,
   creds: { user: string; appPassword: string },
 ): Promise<void> {
-  const remote = await git(['remote', 'get-url', 'origin']);
+  const repo = repoForModule(module);
+  const remote = await git(repo, ['remote', 'get-url', 'origin']);
   const authed = remote.replace(
     /^https:\/\/(?:[^@/]+@)?/i,
     `https://${encodeURIComponent(creds.user)}:${encodeURIComponent(creds.appPassword)}@`,
@@ -193,7 +202,7 @@ export async function pushBranch(
     throw new GitError('só sei autenticar push em remote HTTPS (o origin parece ser SSH)');
   }
 
-  await git(['push', authed, `HEAD:refs/heads/${branch}`], 180_000);
+  await git(repo, ['push', authed, `HEAD:refs/heads/${branch}`], 180_000);
 }
 
 /** `workspace/repo` a partir da URL do origin — o que a API do Bitbucket pede. */
@@ -203,11 +212,11 @@ export function parseBitbucketRepo(remoteUrl: string): { workspace: string; repo
   return { workspace: match[1], repo: match[2] };
 }
 
-export async function remoteUrl(): Promise<string> {
-  return git(['remote', 'get-url', 'origin']);
+export async function remoteUrl(module: string): Promise<string> {
+  return git(repoForModule(module), ['remote', 'get-url', 'origin']);
 }
 
 /** Branch em que o working copy está agora — alimenta o monitor. */
-export async function currentBranch(): Promise<string> {
-  return git(['branch', '--show-current']);
+export async function currentBranch(repo: RepoConfig): Promise<string> {
+  return git(repo, ['branch', '--show-current']);
 }

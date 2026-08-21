@@ -39,12 +39,16 @@ services:
       # "aplicar diff no código" em REVISAO — sem isso a esteira roda igual, só
       # que o dev aplica o diff na mão, como antes.
       SMART_DESKTOP_PATH: /smart_desktop
+      # Segundo working copy: card de SMART Web versiona no repo smart_web, que
+      # tem raiz (fontespb11/), origin e fontes próprios (.sru + .sru.prp).
+      SMART_WEB_PATH: /smart_web
       WORKSPACE_BACKUP_DIR: /app/.backups
     volumes:
       # LEITURA E ESCRITA, diferente do pb-insight (que monta :ro): é aqui que o
       # diff é aplicado. Aponta pra pasta vazia quando a máquina não tem o repo,
-      # e aí o monitor mostra "Código (working copy)" indisponível.
+      # e aí o monitor mostra "Código · <sistema>" indisponível.
       - ${SMART_DESKTOP_PATH:-./.empty}:/smart_desktop
+      - ${SMART_WEB_PATH:-./.empty}:/smart_web
       # Backup dos arquivos antes de cada apply — é o que permite reverter pela UI.
       - applied_backups:/app/.backups
     ports:

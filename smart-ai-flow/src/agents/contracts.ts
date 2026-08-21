@@ -24,7 +24,11 @@ export const AnalyzerOutputSchema = z.object({
   rootCause: z.string(), // hipótese de causa raiz, em uma frase
   reasoning: z.array(z.string()), // passos do raciocínio (o "pensamento" que a UI mostra)
   affectedObjects: z.array(AffectedObjectSchema),
-  needsTrace: z.boolean(), // true = análise pede um pbtrace antes de propor
+  // true = evidência de execução deixaria a análise mais firme. É INFORMATIVO:
+  // não bloqueia a proposta, porque nem todo chamado tem trace e porque o
+  // modelo usava este campo pra dizer "faltou alguma coisa" mesmo quando o que
+  // faltava era código (ver orchestrator.ts).
+  needsTrace: z.boolean(),
   confidence: z.enum(['baixa', 'media', 'alta']),
 });
 export type AnalyzerOutput = z.infer<typeof AnalyzerOutputSchema>;

@@ -17,6 +17,26 @@ Módulo web do SMART. (preencher: escopo funcional, telas principais)
   de data e comportamento de `stored procedures` entre os dois.
 - Parâmetros de comportamento via **INI** (documentar os que afetam este módulo).
 
+## A mensagem da tela quase nunca está literal no código
+
+Vale aqui como no SMART Desktop: o texto que o usuário vê costuma ser montado em
+tempo de execução, por concatenação de variáveis —
+`sMsg = "prefixo " + sStatus + "."` —, e o rótulo (`Óbito`, `Inativo`...) vem de
+um `CHOOSE CASE` que traduz o código do banco.
+
+- Procurar a **frase inteira** do print normalmente não acha nada.
+- Procurar um **pedaço** pode achar o lugar errado: o mesmo texto costuma existir
+  hardcoded em outros objetos, cópias independentes que não são as que disparam
+  na tela do chamado.
+- O que funciona: o **prefixo literal** que sobrou da concatenação, os **nomes
+  das variáveis**, e confirmar **quem chama** o objeto a partir da tela relatada.
+
+## Fontes e companheiros
+
+O código versionado é `fontespb11/<modulo>/`, e **cada `.sru` tem um `.sru.prp`
+ao lado**. Alteração de objeto sobe com o par — commitar um sem o outro deixa o
+objeto inconsistente no PR.
+
 ## Convenções do time
 
 - Branch: o dev cria manualmente a partir do `main` atualizado.

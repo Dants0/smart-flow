@@ -39,6 +39,7 @@ export const CreateCardSchema = z.object({
   jiraKey: z.string().min(1, 'jiraKey é obrigatório'),
   module: z.enum(MODULES),
   rawTicket: z.string().min(1, 'rawTicket é obrigatório'),
+  devHints: z.string().max(4000).optional(),
   images: z.array(CardImageSchema).max(6).optional(),
   traceFiles: z.array(CardTraceFileSchema).max(3).optional(),
   traceProvider: TraceProviderSchema.optional(),
@@ -102,6 +103,10 @@ export const UpdateSettingsSchema = z.object({
       `a skill passa de ${MAX_SKILL_CHARS.toLocaleString('pt-BR')} caracteres — resuma o procedimento, ela entra em todo card`,
     )
     .optional(),
+});
+
+export const ChatMessageSchema = z.object({
+  content: z.string().min(1, 'escreva a pergunta').max(4000),
 });
 
 export const CommitCardSchema = z.object({

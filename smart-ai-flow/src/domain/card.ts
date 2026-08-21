@@ -45,6 +45,8 @@ export interface Card {
   jiraKey: string;
   module: string; // ex: 'smartweb'
   rawTicket: string; // texto colado do Jira
+  /** Direcionamento do dev na criação: query, DataWindow, objeto suspeito. */
+  devHints?: string;
   images?: CardImage[]; // screenshots anexados (erro, tela do PB)
   traceFiles?: CardTraceFile[]; // logs de trace anexados (DB/PowerBuilder)
   stage: Stage;
@@ -55,6 +57,8 @@ export interface Card {
 
   /** false = a análise rodou sem trecho real de código (pb-insight indisponível). */
   grounded?: boolean;
+  /** Caminhos citados no diff que não existem no repositório — proposta a conferir. */
+  unknownPaths?: string[];
   /** O que o dev REALMENTE aplicou — pode divergir do diff proposto pela IA. */
   resolutionText?: string;
 
@@ -83,6 +87,7 @@ export function createCard(input: {
   jiraKey: string;
   module: string;
   rawTicket: string;
+  devHints?: string;
   images?: CardImage[];
   traceFiles?: CardTraceFile[];
   createdById?: string;

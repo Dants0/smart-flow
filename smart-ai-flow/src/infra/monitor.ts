@@ -1,6 +1,7 @@
 import { prisma } from './db';
 import { getSettings, type PlatformSettings } from './settingsRepository';
 import { checkWorkspace } from './workspace';
+import { REPOS } from './repos';
 import { currentBranch, parseBitbucketRepo, remoteUrl } from './git';
 import { checkRepositoryAccess } from './bitbucket';
 import { getBitbucketCredentials } from './userRepository';
@@ -145,6 +146,25 @@ async function checkJira(settings: PlatformSettings): Promise<ResourceStatus> {
  * falha — versionar pela plataforma é opcional, e o dev que commita na mão não
  * precisa configurar nada.
  */
+/**
+ * Um recurso por repositório: o dev precisa ver qual dos dois está gravável e em
+ * que branch. Sem o SMART Web configurado, o card daquele sistema simplesmente
+ * não versiona — e é melhor isso aparecer no monitor do que no meio do commit.
+ */
+async function checkRepo(repo: (typeof REPOS)[number]): Promise<ResourceStatus> {
+  const label = `Código · ${repo.label}`;
+  const health = await checkWorkspace(repo);
+  if (!health.ok) return { id: `workspace_${repo.id}`, label, ...health };
+
+  const branch = await currentBranch(repo).catch(() => '');
+  return {
+    id: `workspace_${repo.id}`,
+    label,
+    ok: true,
+    detail: branch ? `gravável · branch ${branch}` : health.detail,
+  };
+}
+
 async function checkBitbucket(userId?: string): Promise<ResourceStatus> {
   const label = 'Bitbucket (versionamento)';
   if (!userId) return { id: 'bitbucket', label, ok: true, detail: 'não verificado' };
@@ -159,7 +179,7 @@ async function checkBitbucket(userId?: string): Promise<ResourceStatus> {
     };
   }
 
-  const url = await remoteUrl().catch(() => '');
+  const url = await remoteUrl('smartdesktop').catch(() => '');
   const repo = url ? parseBitbucketRepo(url) : null;
   if (!repo) {
     return { id: 'bitbucket', label, ok: false, detail: 'origin não é um repositório do Bitbucket' };
@@ -179,24 +199,14 @@ async function checkBitbucket(userId?: string): Promise<ResourceStatus> {
 export async function checkResources(userId?: string): Promise<ResourceStatus[]> {
   const settings = await getSettings();
 
-  const [postgres, appTrace, pbInsight, jira, workspace, bitbucket] = await Promise.all([
+  const [postgres, appTrace, pbInsight, jira, workspaces, bitbucket] = await Promise.all([
     checkPostgres(),
     checkAppTrace(settings.traceServiceUrl),
     checkPbInsight(settings.pbInsightUrl),
     checkJira(settings),
     // Só afeta o botão de aplicar diff em REVISAO: sem working copy gravável a
     // esteira roda inteira, o dev é que volta a aplicar o diff na mão.
-    checkWorkspace().then(async (w) => {
-      // Branch atual no detalhe: é o que decide se o commit do card vai passar.
-      if (!w.ok) return { id: 'workspace', label: 'Código (working copy)', ...w };
-      const branch = await currentBranch().catch(() => '');
-      return {
-        id: 'workspace',
-        label: 'Código (working copy)',
-        ok: true,
-        detail: branch ? `gravável · branch ${branch}` : w.detail,
-      };
-    }),
+    Promise.all(REPOS.map(checkRepo)),
     checkBitbucket(userId),
   ]);
 
@@ -226,5 +236,5 @@ export async function checkResources(userId?: string): Promise<ResourceStatus[]>
     detail: describeLlm(!!settings.openaiApiKey, openaiActive, settings.openaiModel),
   };
 
-  return [postgres, appTrace, pbInsight, jira, workspace, bitbucket, anthropic, openai];
+  return [postgres, appTrace, pbInsight, jira, ...workspaces, bitbucket, anthropic, openai];
 }

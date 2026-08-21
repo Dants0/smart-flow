@@ -6,24 +6,27 @@ import {
   LuRotateCcw,
   LuLoaderCircle,
   LuRefreshCw,
-  LuFilePen,
+  LuGitPullRequest,
 } from "react-icons/lu";
 import type { Card } from "@/lib/types";
-import { timeAgo } from "@/lib/time";
-import {
-  resolveCard,
-  rejectCard,
-  retryCard,
-  applyCardDiff,
-  revertCardDiff,
-} from "@/lib/api";
+import { acceptCard, rejectCard, resolveCard, retryCard } from "@/lib/api";
 import { loadTraceProviderSettings } from "@/lib/settings";
 import { VersioningPanel } from "./VersioningPanel";
 
 /**
- * Ações dos gates humanos (REVISAO e ERRO). Separado do painel pelo mesmo motivo
- * do CardContent: a página inteira do card precisa oferecer as mesmas ações, e
- * duplicá-las garantiria divergência entre as duas telas.
+ * Ações dos gates humanos.
+ *
+ * A tela mostrava, ao mesmo tempo, "aplicar o diff", "o que você aplicou de
+ * fato" e "aceitar e resolver" — três coisas de momentos diferentes, e ninguém
+ * sabia dizer o que cada botão fazia com o código. Agora cada estágio pede uma
+ * decisão só:
+ *
+ *  - **REVISAO**: rejeitar ou **aceitar e versionar**. Aceitar aplica o diff no
+ *    working copy mapeado e move o card — é o comportamento pedido pelo time, e
+ *    o caminho pro Auto Mode. Se o apply falhar, o card fica onde está.
+ *  - **VERSIONAMENTO**: aplicar o diff, commitar, abrir PR, comentar no Jira e
+ *    então resolver — cada passo com seu botão (ver VersioningPanel).
+ *  - **ERRO**: reprocessar.
  */
 export function CardActions({
   card,
@@ -33,10 +36,8 @@ export function CardActions({
   onUpdated: (card: Card) => void;
 }) {
   const [rejectNote, setRejectNote] = useState("");
-  const [resolutionText, setResolutionText] = useState("");
-  const [busy, setBusy] = useState<
-    null | "resolve" | "reject" | "retry" | "apply" | "revert"
-  >(null);
+  const [showReject, setShowReject] = useState(false);
+  const [busy, setBusy] = useState<null | "accept" | "reject" | "retry" | "resolve">(null);
   const [error, setError] = useState<string | null>(null);
 
   function handleRetry() {
@@ -52,7 +53,7 @@ export function CardActions({
   }
 
   async function run(
-    action: "resolve" | "reject" | "retry" | "apply" | "revert",
+    action: "accept" | "reject" | "retry" | "resolve",
     fn: () => Promise<Card>,
   ) {
     setBusy(action);
@@ -70,154 +71,105 @@ export function CardActions({
     return <VersioningPanel card={card} onUpdated={onUpdated} />;
   }
 
-  if (card.stage !== "REVISAO" && card.stage !== "ERRO") return null;
+  if (card.stage === "ERRO") {
+    return (
+      <div className="px-5 py-3">
+        <button
+          onClick={handleRetry}
+          disabled={busy !== null}
+          className="flex w-full items-center justify-center gap-1.5 rounded-md bg-zinc-900 px-3 py-2.5 text-sm font-medium text-white hover:bg-zinc-700 disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-white"
+        >
+          {busy === "retry" ? (
+            <LuLoaderCircle className="size-4 animate-spin" />
+          ) : (
+            <LuRefreshCw className="size-4" />
+          )}
+          Reprocessar
+        </button>
+        {error && <p className="mt-2 text-xs text-red-600 dark:text-red-400">{error}</p>}
+      </div>
+    );
+  }
+
+  if (card.stage !== "REVISAO") return null;
+
+  const semDiff = !card.proposal?.diff?.trim();
 
   return (
-    <>
-      {error && (
-        <p className="border-t border-zinc-200 px-5 pt-3 text-xs text-red-600 dark:border-zinc-800 dark:text-red-400">
-          {error}
-        </p>
+    <div className="flex flex-col gap-2 px-5 py-3">
+      {/* A nota só aparece quando o dev decide rejeitar — antes ocupava meia tela. */}
+      {showReject && (
+        <textarea
+          value={rejectNote}
+          onChange={(e) => setRejectNote(e.target.value)}
+          placeholder="O que ajustar na nova proposta? (opcional, mas é o que faz a próxima ser melhor)"
+          rows={2}
+          autoFocus
+          className="w-full resize-none rounded-md border border-zinc-300 px-3 py-2 text-sm text-zinc-800 outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+        />
       )}
 
-  {/* Diff aplicado: a partir daqui dá pra versionar (commit na branch do chamado). */}
-  {card.stage === "REVISAO" && card.appliedAt && (
-    <VersioningPanel card={card} onUpdated={onUpdated} />
-  )}
-
-  {/* ações do gate REVISAO */}
-  {card.stage === "REVISAO" && (
-    <div className="border-t border-zinc-200 px-5 py-4 dark:border-zinc-800">
-      {/*
-        Aplicar o diff é a única operação da plataforma que ESCREVE no
-        código. Fica separada de "aceitar e resolver" de propósito: aceitar
-        a proposta e mandar a IA escrever são duas decisões, e juntá-las num
-        botão só faria o dev alterar arquivo sem ter decidido isso.
-      */}
-      {card.proposal?.diff &&
-        (card.appliedAt ? (
-          <div className="mb-3 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2.5 dark:border-emerald-900 dark:bg-emerald-950/40">
-            <div className="flex items-center gap-1.5 text-xs font-medium text-emerald-700 dark:text-emerald-300">
-              <LuCircleCheckBig className="size-3.5" />
-              Diff aplicado no código · {timeAgo(card.appliedAt)}
-            </div>
-            <ul className="mt-1.5 space-y-0.5 font-mono text-[11px] text-emerald-800 dark:text-emerald-400">
-              {card.appliedFiles?.map((f) => (
-                <li key={f} className="truncate" title={f}>
-                  {f}
-                </li>
-              ))}
-            </ul>
-            <p className="mt-1.5 text-[11px] leading-relaxed text-emerald-700/80 dark:text-emerald-400/80">
-              Alteração local: nada foi commitado. Teste antes de resolver — o
-              controle de versão do seu working copy continua sendo a saída final.
-            </p>
-            <button
-              onClick={() => run("revert", () => revertCardDiff(card.id))}
-              disabled={busy !== null}
-              className="mt-2 flex items-center gap-1.5 rounded-md border border-emerald-300 px-2.5 py-1.5 text-xs font-medium text-emerald-800 hover:bg-emerald-100 disabled:opacity-50 dark:border-emerald-800 dark:text-emerald-300 dark:hover:bg-emerald-950"
-            >
-              {busy === "revert" ? (
-                <LuLoaderCircle className="size-3.5 animate-spin" />
-              ) : (
-                <LuRotateCcw className="size-3.5" />
-              )}
-              Desfazer alteração
-            </button>
-          </div>
-        ) : (
-          <button
-            onClick={() => run("apply", () => applyCardDiff(card.id))}
-            disabled={busy !== null}
-            className="mb-3 flex w-full items-center justify-center gap-1.5 rounded-md border border-amber-400 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-800 hover:bg-amber-100 disabled:opacity-50 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300 dark:hover:bg-amber-950"
-          >
-            {busy === "apply" ? (
-              <LuLoaderCircle className="size-4 animate-spin" />
-            ) : (
-              <LuFilePen className="size-4" />
-            )}
-            Aplicar o diff no código
-          </button>
-        ))}
-
-      <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-300">
-        O que você aplicou de fato?
-      </label>
-      <textarea
-        value={resolutionText}
-        onChange={(e) => setResolutionText(e.target.value)}
-        placeholder="Ex: o diff da IA não servia; ajustei o WHERE de d_agm09tab pra amarrar paciente + OS."
-        rows={3}
-        className="w-full resize-none rounded-md border border-zinc-300 px-3 py-2 text-sm text-zinc-800 outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
-      />
-      <p className="mb-3 mt-1 text-[11px] leading-relaxed text-zinc-400">
-        É este texto que vai pra base de conhecimento e alimenta chamados
-        futuros. Em branco, a base guarda o diff proposto pela IA — que pode
-        não ser o que resolveu.
-      </p>
-
-      <textarea
-        value={rejectNote}
-        onChange={(e) => setRejectNote(e.target.value)}
-        placeholder="Nota opcional (ex: por que rejeitou / o que ajustar)"
-        rows={2}
-        className="mb-3 w-full resize-none rounded-md border border-zinc-300 px-3 py-2 text-sm text-zinc-800 outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
-      />
-      <div className="flex gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <button
-          onClick={() =>
-            run("reject", () => rejectCard(card.id, rejectNote || undefined))
-          }
+          onClick={() => {
+            if (!showReject) {
+              setShowReject(true);
+              return;
+            }
+            run("reject", () => rejectCard(card.id, rejectNote || undefined));
+          }}
           disabled={busy !== null}
-          className="flex flex-1 items-center justify-center gap-1.5 rounded-md border border-zinc-300 px-3 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900"
+          className="flex flex-1 items-center justify-center gap-1.5 rounded-md border border-zinc-300 px-3 py-2.5 text-sm font-medium text-zinc-700 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900"
         >
           {busy === "reject" ? (
             <LuLoaderCircle className="size-4 animate-spin" />
           ) : (
             <LuRotateCcw className="size-4" />
           )}
-          Rejeitar, pedir nova proposta
+          {showReject ? "Confirmar: pedir nova proposta" : "Rejeitar, pedir nova proposta"}
         </button>
+
         <button
-          onClick={() =>
-            run("resolve", () =>
-              resolveCard(card.id, {
-                note: rejectNote || undefined,
-                resolutionText: resolutionText || undefined,
-              }),
-            )
+          onClick={() => run("accept", () => acceptCard(card.id))}
+          disabled={busy !== null || semDiff}
+          title={
+            semDiff
+              ? "Não há diff proposto para versionar — peça nova proposta ou resolva sem versionar"
+              : "Aplica o diff no seu working copy e leva o card para Versionamento"
           }
-          disabled={busy !== null}
-          className="flex flex-1 items-center justify-center gap-1.5 rounded-md bg-emerald-600 px-3 py-2 text-sm font-medium text-white hover:bg-emerald-500 disabled:opacity-50"
+          className="flex flex-1 items-center justify-center gap-1.5 rounded-md bg-emerald-600 px-3 py-2.5 text-sm font-medium text-white hover:bg-emerald-500 disabled:opacity-50"
         >
-          {busy === "resolve" ? (
+          {busy === "accept" ? (
             <LuLoaderCircle className="size-4 animate-spin" />
           ) : (
-            <LuCircleCheckBig className="size-4" />
+            <LuGitPullRequest className="size-4" />
           )}
-          Aceitar e resolver
+          Aceitar e versionar
         </button>
       </div>
-    </div>
-  )}
 
-  {/* ação do gate ERRO */}
-  {card.stage === "ERRO" && (
-    <div className="border-t border-zinc-200 px-5 py-4 dark:border-zinc-800">
-      <button
-        onClick={handleRetry}
-        disabled={busy !== null}
-        className="flex w-full items-center justify-center gap-1.5 rounded-md bg-zinc-900 px-3 py-2 text-sm font-medium text-white hover:bg-zinc-700 disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-white"
-      >
-        {busy === "retry" ? (
-          <LuLoaderCircle className="size-4 animate-spin" />
-        ) : (
-          <LuRefreshCw className="size-4" />
-        )}
-        Reprocessar
-      </button>
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-[11px] leading-relaxed text-zinc-400">
+          Aceitar <strong>aplica o diff no seu working copy</strong> e leva o card para
+          Versionamento, onde você commita e abre o PR. A alteração é local e reversível de um
+          clique; nada é commitado sem você mandar.
+        </p>
+        {/* Chamado que se resolve sem PR: caminho discreto, mas existe. */}
+        <button
+          onClick={() => run("resolve", () => resolveCard(card.id, {}))}
+          disabled={busy !== null}
+          className="shrink-0 text-[11px] font-medium text-zinc-400 underline-offset-2 hover:text-zinc-600 hover:underline disabled:opacity-50 dark:hover:text-zinc-300"
+        >
+          {busy === "resolve" ? (
+            <LuLoaderCircle className="inline size-3 animate-spin" />
+          ) : (
+            <LuCircleCheckBig className="mr-1 inline size-3" />
+          )}
+          resolver sem versionar
+        </button>
+      </div>
+
+      {error && <p className="text-xs text-red-600 dark:text-red-400">{error}</p>}
     </div>
-  )}
-    </>
   );
 }

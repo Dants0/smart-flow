@@ -4,6 +4,8 @@ import { z } from 'zod';
 import { createCard, moveCard } from '../domain/card';
 import { Stage } from '../domain/stages';
 import { buildJiraComment } from '../domain/jiraComment';
+import { answerCardQuestion } from '../agents/chat';
+import { appendChat, listChat } from '../infra/chatRepository';
 import { resolve, requestNewProposal, retryFromError } from '../orchestrator/orchestrator';
 import {
   addJiraComment,
@@ -25,7 +27,7 @@ import { getSettings, updateSettings } from '../infra/settingsRepository';
 import { promoteResolvedTicket } from '../infra/pbInsight';
 import { checkResources } from '../infra/monitor';
 import { enqueueAdvance, queueStats } from '../infra/jobQueue';
-import { usageSummary } from '../infra/runRepository';
+import { recordRun, usageSummary } from '../infra/runRepository';
 import { applyDiff, revertDiff, WorkspaceError } from '../infra/workspace';
 import {
   branchForTicket,
@@ -58,6 +60,7 @@ import {
   updateUser,
 } from '../infra/userRepository';
 import {
+  ChatMessageSchema,
   CommitCardSchema,
   CreateCardSchema,
   CreateUserSchema,
@@ -218,6 +221,7 @@ export async function routes(app: FastifyInstance) {
         jiraKey: body.jiraKey,
         module: body.module,
         rawTicket: body.rawTicket,
+        devHints: body.devHints,
         images: body.images,
         traceFiles: body.traceFiles,
         createdById: currentUserId(req),
@@ -282,7 +286,7 @@ export async function routes(app: FastifyInstance) {
       }
 
       try {
-        const result = await applyDiff(card.id, card.proposal.diff);
+        const result = await applyDiff(card.id, card.module, card.proposal.diff);
         const applied = {
           ...card,
           appliedAt: new Date().toISOString(),
@@ -317,7 +321,7 @@ export async function routes(app: FastifyInstance) {
       }
 
       try {
-        await revertDiff(card.appliedBackupDir, card.appliedFiles);
+        await revertDiff(card.module, card.appliedBackupDir, card.appliedFiles);
         const reverted = {
           ...card,
           appliedAt: undefined,
@@ -343,6 +347,116 @@ export async function routes(app: FastifyInstance) {
       }
     });
 
+    /**
+     * Aceitar = **aplicar o diff no código** e mover pra VERSIONAMENTO.
+     *
+     * O dev pediu explicitamente esse comportamento: aceitar a solução escreve
+     * no working copy mapeado (SMART_DESKTOP_PATH / SMART_WEB_PATH), sem passo
+     * intermediário. É o caminho pro Auto Mode, em que a esteira inteira roda
+     * sem clique.
+     *
+     * As garantias continuam onde estavam, e são elas que tornam isso aceitável:
+     *  - `patch --dry-run` antes de tocar em arquivo: ou aplica tudo, ou nada;
+     *  - backup de cada arquivo, com "desfazer" de um clique no passo 1;
+     *  - artefato de build recusado;
+     *  - **se o apply falhar, o card NÃO muda de estágio** — continua em REVISAO
+     *    com o erro na tela, em vez de ir pra versionamento sem código aplicado.
+     */
+    secured.post('/cards/:id/accept', async (req, reply) => {
+      const card = await findCardById((req.params as { id: string }).id);
+      if (!card) return reply.code(404).send({ error: 'não encontrado' });
+      if (card.stage !== 'REVISAO') {
+        return reply.code(400).send({ error: 'só dá pra aceitar a partir de REVISAO' });
+      }
+      if (!card.proposal?.diff?.trim()) {
+        return reply
+          .code(400)
+          .send({ error: 'não há diff proposto — peça nova proposta ou resolva sem versionar' });
+      }
+
+      const userId = currentUserId(req);
+      let applied = card;
+
+      // Reaplicar por cima do que já está no disco duplicaria a mudança.
+      if (!card.appliedAt) {
+        try {
+          const result = await applyDiff(card.id, card.module, card.proposal.diff);
+          applied = {
+            ...card,
+            appliedAt: new Date().toISOString(),
+            appliedFiles: result.files,
+            appliedBackupDir: result.backupDir,
+          };
+        } catch (err) {
+          if (err instanceof WorkspaceError) {
+            // fica em REVISAO: versionar sem o código aplicado não faz sentido
+            return reply.code(422).send({ error: err.message });
+          }
+          throw err;
+        }
+      }
+
+      const accepted = moveCard(
+        applied,
+        Stage.VERSIONAMENTO,
+        'DEV',
+        applied.appliedFiles?.length
+          ? `proposta aceita e aplicada no código (${applied.appliedFiles.length} arquivo(s))`
+          : 'proposta aceita',
+        userId,
+      );
+      await saveCard(accepted);
+      return accepted;
+    });
+
+    // ---- Chat de dúvidas sobre o card -----------------------------------
+
+    secured.get('/cards/:id/chat', async (req) => listChat((req.params as { id: string }).id));
+
+    /**
+     * Pergunta pontual sobre a resolução. Contexto = o card inteiro + código
+     * real, montado no backend: o dev não recola nada, e a resposta fica no
+     * histórico do card.
+     */
+    secured.post('/cards/:id/chat', async (req, reply) => {
+      const body = parseBody(ChatMessageSchema, req, reply);
+      if (!body) return;
+
+      const id = (req.params as { id: string }).id;
+      const card = await findCardById(id);
+      if (!card) return reply.code(404).send({ error: 'não encontrado' });
+
+      const userId = currentUserId(req);
+      await appendChat({ cardId: id, role: 'user', content: body.content, userId });
+
+      const previous = await listChat(id);
+
+      try {
+        const { answer, usage } = await answerCardQuestion(
+          card,
+          previous.map((m) => ({ role: m.role, content: m.content })),
+        );
+
+        await appendChat({ cardId: id, role: 'assistant', content: answer });
+        // O chat gasta token como qualquer outro estágio — entra na auditoria.
+        await recordRun({
+          cardId: id,
+          stage: card.stage,
+          ok: true,
+          provider: usage.provider,
+          model: usage.model,
+          inputTokens: usage.inputTokens,
+          outputTokens: usage.outputTokens,
+        });
+
+        return listChat(id);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'falha ao responder';
+        await recordRun({ cardId: id, stage: card.stage, ok: false, errorMessage: message });
+        return reply.code(502).send({ error: message });
+      }
+    });
+
     // ---- Versionamento (commit, push, PR, comentário no Jira) -----------
 
     /**
@@ -358,7 +472,7 @@ export async function routes(app: FastifyInstance) {
       }
 
       try {
-        return await previewCommit(card.jiraKey, card.appliedFiles);
+        return await previewCommit(card.module, card.jiraKey, card.appliedFiles);
       } catch (err) {
         if (err instanceof GitError) return reply.code(422).send({ error: err.message });
         throw err;
@@ -376,8 +490,8 @@ export async function routes(app: FastifyInstance) {
         getGitIdentity(userId),
       ]);
       if (!card) return reply.code(404).send({ error: 'não encontrado' });
-      if (card.stage !== 'REVISAO') {
-        return reply.code(400).send({ error: 'só dá pra versionar a partir de REVISAO' });
+      if (card.stage !== 'VERSIONAMENTO' && card.stage !== 'REVISAO') {
+        return reply.code(400).send({ error: 'o card não está em versionamento' });
       }
       if (!identity) {
         return reply.code(428).send({
@@ -389,6 +503,7 @@ export async function routes(app: FastifyInstance) {
       try {
         const message = body.message?.trim() || commitMessage(card.jiraKey, card.proposal?.summary);
         const { hash } = await commitFiles({
+          module: card.module,
           jiraKey: card.jiraKey,
           files: body.files,
           message,
@@ -396,13 +511,33 @@ export async function routes(app: FastifyInstance) {
           authorEmail: identity.email,
         });
 
-        const versioned = moveCard(
-          { ...card, branch: branchForTicket(card.jiraKey), commitHash: hash, committedFiles: body.files },
-          Stage.VERSIONAMENTO,
-          'DEV',
-          `commit ${hash.slice(0, 8)} · ${body.files.length} arquivo(s) · ${message}`,
-          userId,
-        );
+        const withCommit = {
+          ...card,
+          branch: branchForTicket(card.jiraKey),
+          commitHash: hash,
+          committedFiles: body.files,
+        };
+        const note = `commit ${hash.slice(0, 8)} · ${body.files.length} arquivo(s) · ${message}`;
+
+        // Vindo de REVISAO (card antigo, antes do botão "aceitar e versionar"),
+        // o commit ainda move o estágio. Já em VERSIONAMENTO, só anota.
+        const versioned =
+          card.stage === Stage.REVISAO
+            ? moveCard(withCommit, Stage.VERSIONAMENTO, 'DEV', note, userId)
+            : {
+                ...withCommit,
+                history: [
+                  ...card.history,
+                  {
+                    from: card.stage,
+                    to: card.stage,
+                    by: 'DEV' as const,
+                    userId,
+                    at: new Date().toISOString(),
+                    note,
+                  },
+                ],
+              };
         await saveCard(versioned);
         return versioned;
       } catch (err) {
@@ -430,9 +565,9 @@ export async function routes(app: FastifyInstance) {
       const branch = card.branch ?? branchForTicket(card.jiraKey);
 
       try {
-        await pushBranch(branch, creds);
+        await pushBranch(card.module, branch, creds);
 
-        const repo = parseBitbucketRepo(await remoteUrl());
+        const repo = parseBitbucketRepo(await remoteUrl(card.module));
         if (!repo) {
           return reply
             .code(422)
@@ -638,7 +773,8 @@ export async function routes(app: FastifyInstance) {
           .send({ code: 'BITBUCKET_NOT_CONFIGURED', error: 'preencha usuário e app password primeiro' });
       }
 
-      const url = await remoteUrl().catch(() => '');
+      // sem card no contexto, o teste usa o repositório do SMART Desktop
+      const url = await remoteUrl('smartdesktop').catch(() => '');
       const repo = url ? parseBitbucketRepo(url) : null;
       if (!repo) {
         return reply

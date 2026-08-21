@@ -7,6 +7,14 @@ import {
   parseAgentOutput,
   repairJsonStrings,
 } from '../src/agents/contracts';
+import {
+  blockEnd,
+  declaredAncestors,
+  extractIdentifiers,
+  harvestTerms,
+  selectExcerpt,
+} from '../src/infra/sourceExcerpts';
+import { extractPhrases, phraseBackoff } from '../src/infra/pbInsight';
 
 const ANALISE_OK = {
   rootCause: 'constraint duplicada em ate_paciente',
@@ -106,5 +114,134 @@ linha 2 do log",
     } catch (err) {
       expect((err as AgentOutputError).raw).toBe('isso não é json');
     }
+  });
+});
+
+describe('extractIdentifiers — o que buscar no código', () => {
+  it('pega identificadores no estilo PowerBuilder do texto da análise', () => {
+    const ids = extractIdentifiers(
+      'o ancestral u_dw_pac seta i_bAvancar via uof_testar_status() no evento avancar',
+    );
+
+    expect(ids).toContain('u_dw_pac');
+    expect(ids).toContain('i_bAvancar');
+    expect(ids).toContain('uof_testar_status');
+    // "avancar" não tem prefixo com underscore, mas é o evento que importa
+    expect(ids).toContain('avancar');
+  });
+
+  it('não devolve lista infinita — o material entra no prompt e é pago', () => {
+    const texto = Array.from({ length: 50 }, (_, i) => `w_tela_${i}`).join(' ');
+    expect(extractIdentifiers(texto).length).toBeLessThanOrEqual(12);
+  });
+
+  it('texto sem identificador não vira busca vazia perigosa', () => {
+    expect(extractIdentifiers('o sistema trava quando o usuário confirma')).toEqual([]);
+  });
+});
+
+describe('blockEnd — bloco inteiro, não janela fixa', () => {
+  const FONTE = [
+    'event avancar;call super::avancar;LONG nPacReg', // 0
+    'nPacReg = dw_pac01tab.uof_get_pacreg ()',
+    'IF nPacReg > 0 THEN',
+    '   MessageBox("x","y")',
+    'END IF',
+    'end event', // 5
+    '',
+    'event buscar;call super::buscar;',
+    'end event',
+  ];
+
+  it('fecha no "end event" do próprio bloco', () => {
+    expect(blockEnd(FONTE, 0)).toEqual({ end: 5, truncated: false });
+  });
+
+  it('fecha também em function e subroutine', () => {
+    const fn = ['public function boolean f (long x);int i', 'return true', 'end function'];
+    expect(blockEnd(fn, 0).end).toBe(2);
+  });
+
+  it('bloco sem terminador é cortado E marcado como cortado', () => {
+    // 500 linhas sem "end event": o teto age, mas quem lê precisa saber
+    const enorme = ['event avancar;call super::avancar;', ...Array(500).fill('  // corpo')];
+    const resultado = blockEnd(enorme, 0);
+
+    expect(resultado.truncated).toBe(true);
+    expect(resultado.end).toBeLessThan(enorme.length - 1);
+  });
+
+  it('selectExcerpt entrega o evento inteiro, com o corpo onde a lógica mora', () => {
+    // era o bug: janela de 90 linhas cortava o evento no meio e o modelo,
+    // com razão, recusava propor por falta do trecho
+    const trecho = selectExcerpt(FONTE.join('\n'), ['avancar']);
+
+    expect(trecho).toContain('MessageBox');
+    expect(trecho).toContain('end event');
+  });
+});
+
+describe('busca por frase de tela (mensagem montada em runtime)', () => {
+  const CHAMADO = `Ao selecionar paciente com óbito o sistema exibe
+"Este paciente está registrado no sistema como Óbito. Deseja prosseguir?"
+e avança mesmo respondendo Não.`;
+
+  it('extrai a frase citada entre aspas', () => {
+    expect(extractPhrases(CHAMADO)[0]).toContain('registrado no sistema como');
+  });
+
+  it('sem aspas, pega frase longa o bastante pra ser texto de tela', () => {
+    const semAspas = 'O sistema informa que o paciente possui pendencia financeira aberta';
+    expect(extractPhrases(semAspas).length).toBeGreaterThan(0);
+  });
+
+  it('ignora frase curta demais pra ser mensagem', () => {
+    expect(extractPhrases('deu erro')).toEqual([]);
+  });
+
+  it('encurta pela direita — a cauda é a parte concatenada em runtime', () => {
+    // medido no PB Insight: a frase inteira dá count 0; o prefixo acha o código
+    const tentativas = phraseBackoff('Este paciente está registrado no sistema como Óbito');
+
+    expect(tentativas[0]).toBe('Este paciente está registrado no sistema como Óbito');
+    expect(tentativas).toContain('Este paciente está');
+    expect(tentativas[tentativas.length - 1].split(' ')).toHaveLength(3);
+  });
+
+  it('não desce abaixo do mínimo de palavras (viraria busca genérica)', () => {
+    expect(phraseBackoff('um dois')).toEqual([]);
+  });
+});
+
+describe('seguir a corrente do código', () => {
+  it('lê o ancestral declarado no controle', () => {
+    // "type dw_pac01tab from u_dw_pac within w_x" é o que liga a tela ao
+    // user object onde a lógica realmente mora
+    const fonte = 'type dw_pac01tab from u_dw_pac within w_sismama_citopatologico';
+    expect(declaredAncestors(fonte)).toContain('u_dw_pac');
+  });
+
+  it('ignora tipo nativo do PowerBuilder — não é objeto do repositório', () => {
+    expect(declaredAncestors('global type w_x from window')).toEqual([]);
+    expect(declaredAncestors('type st_1 from statictext within w_x')).toEqual([]);
+  });
+
+  it('colhe o que buscar a seguir a partir do código lido', () => {
+    // o chamado dizia "avança", não "avancar", e nunca citou uof_testar_status:
+    // sem colher do código, o ancestral era aberto sem se saber o que procurar
+    const codigo = `event avancar;call super::avancar;
+IF not This.uof_testar_status (0) THEN
+   i_bavancar = FALSE
+END IF`;
+    const termos = harvestTerms(codigo);
+
+    expect(termos).toContain('avancar');
+    expect(termos).toContain('uof_testar_status');
+    expect(termos.some((t) => /^i_bavancar$/i.test(t))).toBe(true);
+  });
+
+  it('não devolve lista infinita de termos', () => {
+    const codigo = Array.from({ length: 40 }, (_, i) => `This.uof_func_${i} ()`).join('\n');
+    expect(harvestTerms(codigo).length).toBeLessThanOrEqual(15);
   });
 });

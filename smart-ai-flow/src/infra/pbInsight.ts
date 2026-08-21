@@ -14,7 +14,13 @@ import type { Card } from '../domain/card';
  */
 const FETCH_TIMEOUT_MS = 5000;
 const MAX_HITS = 6;
-const SNIPPET_CHARS = 3000;
+/**
+ * O PB Insight devolve o corpo COMPLETO do evento; cortar em 3.000 caracteres
+ * entregava evento pela metade justamente nos objetos grandes, que são os que
+ * mais aparecem em chamado. O teto continua existindo (o prompt é pago), mas
+ * agora cabe um evento inteiro de umas 300 linhas.
+ */
+const SNIPPET_CHARS = 12000;
 
 const STOPWORDS = new Set([
   'para', 'como', 'sistema', 'chamado', 'incidente', 'erro', 'quando', 'depois',
@@ -23,6 +29,53 @@ const STOPWORDS = new Set([
   'houve', 'solucao', 'solução', 'contorno', 'reproduzido', 'ocorre', 'diferente',
   'observacao', 'observação', 'disposicao', 'disposição', 'esclarecimentos',
 ]);
+
+/**
+ * Frases de tela que o chamado cita — normalmente entre aspas, ou coladas do
+ * print pelo suporte.
+ *
+ * Existem porque a mensagem quase nunca está literal no código: ela é montada em
+ * runtime (`"prefixo " + sStatus + "."`). Buscar a frase inteira dá **zero**
+ * resultado (medido: "Este paciente está registrado no sistema como Óbito.
+ * Deseja prosseguir?" → count 0), enquanto o prefixo que sobreviveu à
+ * concatenação acha o código.
+ */
+export function extractPhrases(text: string): string[] {
+  const phrases: string[] = [];
+
+  // 1) o que está entre aspas é quase sempre a mensagem citada pelo suporte
+  for (const match of text.matchAll(/["'“”']([^"'“”']{15,160})["'“”']/g)) {
+    phrases.push(match[1].trim());
+  }
+
+  // 2) sem aspas, frases longas o bastante pra serem texto de tela
+  if (phrases.length === 0) {
+    for (const raw of text.split(/[\n.!?]+/)) {
+      const frase = raw.trim();
+      if (frase.length >= 25 && frase.split(/\s+/).length >= 5) phrases.push(frase);
+    }
+  }
+
+  return [...new Set(phrases)].slice(0, 3);
+}
+
+/**
+ * Encurta a frase pela direita, palavra a palavra, até o mínimo útil.
+ * É a sequência de tentativas da busca: a cauda da mensagem costuma ser a parte
+ * concatenada em runtime, e é ela que impede o match.
+ */
+export function phraseBackoff(phrase: string, minWords = 3): string[] {
+  const words = phrase
+    .replace(/[.?!,;:]+$/g, '')
+    .split(/\s+/)
+    .filter(Boolean);
+
+  const tentativas: string[] = [];
+  for (let n = Math.min(words.length, 12); n >= minWords; n--) {
+    tentativas.push(words.slice(0, n).join(' '));
+  }
+  return tentativas;
+}
 
 function extractKeywords(query: string): string[] {
   const words = query.toLowerCase().match(/[a-z][a-z0-9_]{3,}/g) ?? [];
@@ -120,7 +173,30 @@ export async function retrieveContext(module: string, query: string): Promise<Re
   const seen = new Set<string>();
   const blocks: string[] = [];
 
-  for (const kw of keywords) {
+  /*
+   * Primeiro as FRASES do chamado, encurtando até achar. A mensagem de tela é
+   * a pista mais direta que existe — quando ela casa, aponta o objeto certo sem
+   * depender de o suporte ter escrito o nome da janela.
+   */
+  const phraseTerms: string[] = [];
+  for (const phrase of extractPhrases(query)) {
+    for (const tentativa of phraseBackoff(phrase)) {
+      try {
+        const resp = await pbInsightGet<SearchResponse>(
+          pbInsightUrl,
+          `/search?q=${encodeURIComponent(tentativa)}&limit=5`,
+        );
+        if (resp.count > 0) {
+          phraseTerms.push(tentativa);
+          break; // achou com esta frase; não precisa encurtar mais
+        }
+      } catch {
+        break; // pb-insight fora do ar: cai no caminho de palavras-chave
+      }
+    }
+  }
+
+  for (const kw of [...phraseTerms, ...keywords]) {
     if (blocks.length >= MAX_HITS) break;
 
     let search: SearchResponse;

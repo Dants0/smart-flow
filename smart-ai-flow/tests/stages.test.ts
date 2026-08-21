@@ -48,7 +48,10 @@ describe('stages', () => {
   it('recusa pulos de etapa', () => {
     expect(canTransition(Stage.NOVO, Stage.REVISAO)).toBe(false);
     expect(canTransition(Stage.NOVO, Stage.RESOLVIDO)).toBe(false);
-    expect(canTransition(Stage.ANALISE, Stage.REVISAO)).toBe(false);
+    expect(canTransition(Stage.NOVO, Stage.VERSIONAMENTO)).toBe(false);
+    // ANALISE -> REVISAO deixou de ser pulo: é a saída quando a análise pede
+    // pbtrace e o orquestrador se recusa a propor diff sem evidência.
+    expect(canTransition(Stage.ANALISE, Stage.RESOLVIDO)).toBe(false);
   });
 
   it('assertTransition estoura com a transição no texto do erro', () => {

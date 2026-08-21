@@ -33,7 +33,9 @@ export const OWNER: Record<Stage, Owner> = {
 /** Transições permitidas a partir de cada estágio. */
 const TRANSITIONS: Record<Stage, Stage[]> = {
   [Stage.NOVO]: [Stage.ANALISE],
-  [Stage.ANALISE]: [Stage.DESENVOLVIMENTO, Stage.ERRO],
+  // REVISAO: a análise ficou pronta mas pediu pbtrace — o orquestrador para
+  // aqui em vez de propor um diff sem evidência (ver orchestrator.ts).
+  [Stage.ANALISE]: [Stage.DESENVOLVIMENTO, Stage.REVISAO, Stage.ERRO],
   [Stage.DESENVOLVIMENTO]: [Stage.REVISAO, Stage.ERRO],
   // dev pode versionar (VERSIONAMENTO), aceitar direto (RESOLVIDO — correção que
   // não passa por PR) ou pedir nova proposta (DESENVOLVIMENTO)

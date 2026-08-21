@@ -57,6 +57,7 @@ model User {
   cards           Card[]
   dismissedIssues DismissedIssue[]
   history         History[]
+  chatMessages    ChatMessage[]
 
   createdAt DateTime @default(now())
 }
@@ -78,6 +79,10 @@ model Card {
   jiraKey    String
   module     String
   rawTicket  String
+  // O que o DEV já sabe: query suspeita, DataWindow específica, objeto que ele
+  // desconfia. Vale mais que qualquer palpite do modelo — quem escreveu isso
+  // tem o sistema na frente. Entra no prompt E na busca de código.
+  devHints   String?
   images     Json? // CardImage[] (screenshots em base64 anexados ao chamado)
   traceFiles Json? // CardTraceFile[] (logs de trace anexados)
   stage      Stage  @default(NOVO)
@@ -90,6 +95,10 @@ model Card {
   // false = a análise rodou sem contexto de código (pb-insight fora do ar).
   // Sem isso, uma análise sem grounding parece tão confiante quanto uma com.
   grounded Boolean @default(true)
+
+  // Caminhos que o diff cita e que NÃO existem no repositório. Não vazio = o
+  // modelo inventou arquivo (aconteceu no SMART-50927) e o card precisa avisar.
+  unknownPaths Json?
 
   // O que o dev REALMENTE aplicou. Pode divergir do diff proposto pela IA —
   // é este texto que vai pra base de conhecimento do pb-insight no RESOLVIDO,
@@ -116,6 +125,7 @@ model Card {
   history History[]
   runs    Run[]
   jobs    Job[]
+  chat    ChatMessage[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -195,6 +205,22 @@ model PlatformSettings {
   skills String?
 
   updatedAt DateTime @updatedAt
+}
+
+// Conversa do dev com a IA sobre um card. Persistida porque a dúvida e a
+// resposta fazem parte da história da resolução: quem revisar o card depois
+// precisa ver o que foi perguntado, e o consumo já é auditado em Run.
+model ChatMessage {
+  id      String   @id @default(uuid())
+  card    Card     @relation(fields: [cardId], references: [id], onDelete: Cascade)
+  cardId  String
+  role    String // 'user' | 'assistant'
+  content String
+  user    User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  userId  String?
+  at      DateTime @default(now())
+
+  @@index([cardId, at])
 }
 
 // Registro de cada chamada à API — base pra controle de custo e auditoria.

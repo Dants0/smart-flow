@@ -187,6 +187,8 @@ export function createCard(input: {
   jiraKey: string;
   module: string;
   rawTicket: string;
+  /** Direcionamento do dev: query, DataWindow, objeto suspeito. */
+  devHints?: string;
   images?: CardImage[];
   traceFiles?: CardTraceFile[];
   traceProvider?: TraceProviderInput;
@@ -225,6 +227,14 @@ export function retryCard(id: string, traceProvider?: TraceProviderInput): Promi
  */
 export function applyCardDiff(id: string): Promise<Card> {
   return request(`/cards/${id}/apply`, { method: "POST" });
+}
+
+/**
+ * REVISAO → VERSIONAMENTO. Não escreve nada no código: só registra que o dev
+ * aceitou e leva o card pro estágio onde ele aplica, commita e abre o PR.
+ */
+export function acceptCard(id: string): Promise<Card> {
+  return request(`/cards/${id}/accept`, { method: "POST" });
 }
 
 /** Desfaz o apply restaurando os arquivos do backup. */
@@ -356,4 +366,23 @@ export interface BitbucketAccess {
 
 export function testBitbucketConnection(): Promise<BitbucketAccess> {
   return request("/me/bitbucket/test", { method: "POST" });
+}
+
+// ---- Chat de dúvidas sobre o card -----------------------------------------
+
+export interface ChatMessage {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  userName?: string;
+  at: string;
+}
+
+export function getCardChat(id: string): Promise<ChatMessage[]> {
+  return request(`/cards/${id}/chat`);
+}
+
+/** Pergunta pontual: o contexto (chamado, análise, proposta, código) é montado no backend. */
+export function sendCardQuestion(id: string, content: string): Promise<ChatMessage[]> {
+  return request(`/cards/${id}/chat`, { method: "POST", body: JSON.stringify({ content }) });
 }

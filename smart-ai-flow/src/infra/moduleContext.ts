@@ -7,7 +7,7 @@ import { join } from 'node:path';
  * à IA o briefing do módulo errado. Escolhido "smartdesktop", o briefing dos
  * quatro entra junto e a IA decide onde o problema mora.
  */
-const SMART_DESKTOP_MODULES = ['atende', 'agenda', 'mwsus', 'cadgf'] as const;
+const SMART_DESKTOP_MODULES = ['atende', 'agenda', 'mwsus', 'cadgf', 'pacdel', 'cirurg'] as const;
 
 /**
  * Carrega o briefing que vai no prompt: o CLAUDE.md do sistema alvo. É o que dá
