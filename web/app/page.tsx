@@ -10,6 +10,7 @@ import {
   LuBellRing,
   LuX,
   LuSettings,
+  LuLightbulb,
   LuLogOut,
 } from "react-icons/lu";
 import { SiJira } from "react-icons/si";
@@ -36,11 +37,14 @@ import { ThemeToggle } from "@/components/ThemeToggle";
 import { AuthGuard } from "@/components/AuthGuard";
 import { SetupBanner } from "@/components/SetupBanner";
 import { JiraBlockedBanner } from "@/components/JiraBlockedBanner";
+import { GuideModal } from "@/components/GuideModal";
 import { clearToken, type AuthUser } from "@/lib/auth";
 
 const POLL_MS = 5000;
 const PENDING_POLL_MS = 60000;
 const SEARCH_DEBOUNCE_MS = 350;
+/** Guia de primeiros passos: abre sozinho uma vez, depois só pelo botão. */
+const GUIDE_SEEN_KEY = "smart-ai-flow:guide-seen";
 
 export default function Home() {
   return <AuthGuard>{(user) => <Board user={user} />}</AuthGuard>;
@@ -56,6 +60,8 @@ function Board({ user }: { user: AuthUser }) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedCard, setSelectedCard] = useState<Card | null>(null);
   const [showSettings, setShowSettings] = useState(false);
+  // Guia abre sozinho no primeiro acesso e nunca mais — depois fica no botão.
+  const [showGuide, setShowGuide] = useState(false);
   const [traceSettings, setTraceSettings] = useState<TraceProviderSettings | null>(null);
   const [pending, setPending] = useState<PendingJiraIssue[]>([]);
   // Jira negou a autenticação: o backend parou de tentar e o polling para junto.
@@ -123,6 +129,14 @@ function Board({ user }: { user: AuthUser }) {
     };
   }, [selectedId]);
 
+  useEffect(() => {
+    // primeiro acesso deste navegador: mostra o guia sem precisar procurar o botão
+    if (!window.localStorage.getItem(GUIDE_SEEN_KEY)) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- onboarding no mount
+      setShowGuide(true);
+    }
+  }, []);
+
   const refreshPending = useCallback(async () => {
     try {
       setPending(await fetchPendingJiraIssues());
@@ -173,6 +187,14 @@ function Board({ user }: { user: AuthUser }) {
         <div className="ml-auto">
           <ThemeToggle />
         </div>
+        <button
+          onClick={() => setShowGuide(true)}
+          className="flex items-center gap-1.5 rounded-md border border-zinc-300 px-3 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+          title="Primeiros passos e boas práticas"
+        >
+          <LuLightbulb className="size-4" />
+          Como usar
+        </button>
         <Link
           href="/settings"
           className="flex items-center gap-1.5 rounded-md border border-zinc-300 px-3 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
@@ -314,6 +336,15 @@ function Board({ user }: { user: AuthUser }) {
           current={traceSettings}
           onClose={() => setShowSettings(false)}
           onSaved={setTraceSettings}
+        />
+      )}
+
+      {showGuide && (
+        <GuideModal
+          onClose={() => {
+            setShowGuide(false);
+            window.localStorage.setItem(GUIDE_SEEN_KEY, "1");
+          }}
         />
       )}
     </div>

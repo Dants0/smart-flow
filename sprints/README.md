@@ -42,6 +42,8 @@ solicitação, criado ao final do atendimento.
 | [2026-08-21-09](2026-08-21-09-bloco-inteiro-em-vez-de-janela-fixa.md) | Código truncado: bloco inteiro em vez de janela fixa |
 | [2026-08-21-10](2026-08-21-10-mensagem-montada-e-corrente-do-codigo.md) | Mensagem montada em runtime e a corrente do código |
 | [2026-08-21-11](2026-08-21-11-direcionamento-do-dev-na-criacao.md) | Direcionamento do dev na criação do card |
+| [2026-08-21-12](2026-08-21-12-guia-de-primeiros-passos.md) | Guia de primeiros passos e boas práticas |
+| [2026-08-21-13](2026-08-21-13-pendencia-configuracao-de-repositorio.md) | **Em aberto:** como o dev configura o repositório (decisão de arquitetura) |
 
 ## Template
 

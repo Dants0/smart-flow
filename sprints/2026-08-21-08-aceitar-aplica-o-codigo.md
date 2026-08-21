@@ -49,7 +49,7 @@ ainda. É a lacuna nº 1 da lista abaixo.
    encaixa, não que está certo. Falta uma segunda passada revisando o diff
    contra o conteúdo real do arquivo (pega arquivo gêmeo trocado, lógica
    invertida, `RETURN` no lugar errado).
-3. **Isolamento por card.** Um working copy compartilhado com 34 arquivos sujos
+3. **Isolamento por card.** (detalhado em [2026-08-21-13](2026-08-21-13-pendencia-configuracao-de-repositorio.md), em discussão com o tech lead) Um working copy compartilhado com 34 arquivos sujos
    não suporta dois cards em paralelo, e impede criar/trocar branch. O caminho
    natural é `git worktree` por card: checkout isolado, a partir de base limpa,
    sem tocar na árvore do dev. Resolve criação de branch, concorrência e
