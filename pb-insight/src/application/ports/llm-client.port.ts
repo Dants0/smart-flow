@@ -14,6 +14,8 @@ export interface DiagnosticContext {
   images?: DiagnosticImage[];
   /** Sugestão/observação de um tech lead humano sobre o chamado, quando existir — hipótese a verificar, não fato dado. */
   techLeadComment?: string;
+  /** Quantas outras ocorrências do mesmo evento vieram no contexto — liga a seção "Abrangência" da resposta. */
+  siblingCount?: number;
 }
 
 export interface DiagnosisOutput {

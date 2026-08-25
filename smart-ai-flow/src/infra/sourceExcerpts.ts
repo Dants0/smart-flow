@@ -34,13 +34,30 @@ export interface SourceMaterial {
   notFound: string[];
 }
 
-const MAX_CHARS_PER_FILE = 24000;
-const MAX_TOTAL_CHARS = 72000;
-const MAX_FILES = 6;
-/** Teto de segurança: bloco maior que isso é cortado, mas COM AVISO. */
-const MAX_BLOCK_LINES = 400;
+/*
+ * Orçamento de material. Subiu junto com a evidência: `w_agd03.srw` tem 282.540
+ * caracteres, e com o teto anterior (24.000 por arquivo) o modelo recebia 8% da
+ * janela. Ele então respondia "falta o trecho que abre o pop-up" — resposta
+ * correta sobre um arquivo que ele quase não viu, e que o dev lia como
+ * má vontade da IA.
+ *
+ * O teto real é a janela de contexto do modelo, não estes números: 240.000
+ * caracteres são ~65 mil tokens de entrada, folgado em Sonnet 5. Entrada custa,
+ * mas custa menos que um diff que não sai.
+ */
+const MAX_CHARS_PER_FILE = 96000;
+const MAX_TOTAL_CHARS = 240000;
+const MAX_FILES = 10;
+/**
+ * Teto de segurança: bloco maior que isso é cortado, mas COM AVISO.
+ * Exportado pro teste acompanhar o valor em vez de fixar um número na mão —
+ * subir o teto quebrou o teste que assumia 400.
+ */
+export const MAX_BLOCK_LINES = 800;
 /** Linhas em volta de uma ocorrência que não é definição (ex: chamada). */
 const CALL_CONTEXT = 12;
+/** Teto de arquivos vindos da busca literal — complemento, não enxurrada. */
+const MAX_GREP_HITS = 4;
 
 /**
  * Identificadores no estilo PowerBuilder dentro do texto: `uof_testar_status`,
@@ -266,6 +283,117 @@ export function declaredAncestors(content: string): string[] {
 }
 
 /**
+ * Textos entre aspas citados no chamado ou na análise — `'Visualizar
+ * (Instruções)'`, `"Deseja prosseguir?"`.
+ *
+ * É o que liga a queixa do usuário ao objeto que desenha a tela: o título da
+ * janela e o texto do botão estão no fonte, literalmente. Sem isto a busca só
+ * enxergava identificadores no estilo PowerBuilder (`w_agd03`,
+ * `wf_buscar_instrucoes`) e nunca chegava na janela do pop-up quando a análise
+ * não sabia o nome dela — que é justamente quando o dev mais precisa.
+ */
+export function extractQuotedLiterals(text: string): string[] {
+  const found = new Set<string>();
+
+  for (const m of text.matchAll(/["'“”]([^"'“”\n]{6,60})["'“”]/g)) {
+    const valor = m[1].trim();
+    // precisa parecer texto de tela: tem letra e não é caminho nem identificador
+    if (!/[a-zà-ú]/i.test(valor)) continue;
+    if (/[\\/]/.test(valor)) continue;
+    if (/^[a-z]{1,4}_[a-z0-9_]+$/i.test(valor)) continue;
+    found.add(valor);
+  }
+
+  return [...found].slice(0, 5);
+}
+
+/**
+ * Pedaço ASCII mais longo de um literal, pra usar como alternativa na busca.
+ *
+ * "Visualizar (Instruções)" com acento depende da codificação com que o fonte
+ * foi exportado; "Visualizar" não depende de nada. Busca que falha por causa de
+ * um cedilha é indistinguível, pra quem lê o resultado, de objeto inexistente.
+ */
+export function asciiFallback(literal: string): string | null {
+  // Trecho CONTÍGUO, não a maior palavra: "Visualizar (Instru" só casa com a
+  // tela certa, enquanto "Visualizar" casa com todo botão do sistema — foi o
+  // que encheu o material com quatro telas de auditoria sem relação com o
+  // chamado, roubando o orçamento de quem tinha o código.
+  const trechos = literal.split(/[^\x20-\x7E]+/).map((t) => t.trim());
+  const maior = trechos.sort((a, b) => b.length - a.length)[0];
+  return maior && maior.length >= 8 ? maior : null;
+}
+
+/**
+ * Termos que o material CITA mas não DEFINE.
+ *
+ * A análise do SMART-51229 terminou pedindo "quem chama wf_seleciona_horario" —
+ * pergunta que a plataforma sabe responder sozinha com um grep, e que antes
+ * virava tarefa manual do dev.
+ */
+export function termsWithoutDefinition(excerpts: SourceExcerpt[], terms: string[]): string[] {
+  const todoOCodigo = excerpts.map((e) => e.content).join('\n');
+  const linhas = todoOCodigo.split('\n');
+
+  const minusculo = todoOCodigo.toLowerCase();
+
+  return terms.filter((term) => {
+    if (term.length < 6) return false;
+    // nem citado no material: não é lacuna, é ruído
+    if (!minusculo.includes(term.toLowerCase())) return false;
+    return !linhas.some((linha) => isDefinitionStart(linha, term));
+  });
+}
+
+
+/**
+ * Arquivos do repositório que MENCIONAM algum destes textos.
+ *
+ * `git grep` em vez do índice do RAG de propósito: aqui a pergunta é literal
+ * ("quem escreve esta frase", "quem chama esta função"), e busca exata responde
+ * isso melhor que similaridade — que traz o parecido e erra o idêntico.
+ */
+async function filesMentioning(repoRoot: string, patterns: string[]): Promise<string[]> {
+  if (patterns.length === 0) return [];
+
+  const args = [
+    'grep',
+    '--no-color',
+    '-l', // só os nomes
+    '-i',
+    '-F', // texto literal, não regex: parênteses de 'Visualizar (Instruções)'
+    ...patterns.flatMap((p) => ['-e', p]),
+    'HEAD',
+    '--',
+    '*.srw',
+    '*.sru',
+    '*.sra',
+    '*.srd',
+    '*.srm',
+    '*.srq',
+    '*.srs',
+    '*.srf',
+  ];
+
+  try {
+    const { stdout } = await exec('git', args, {
+      cwd: repoRoot,
+      maxBuffer: 8 * 1024 * 1024,
+      timeout: 60_000,
+    });
+    // saída vem como "HEAD:ws_objects/.../w_x.srw"
+    return stdout
+      .split('\n')
+      .map((l) => l.trim().replace(/^HEAD:/, ''))
+      .filter(Boolean)
+      .slice(0, MAX_GREP_HITS);
+  } catch {
+    // exit 1 = nenhum resultado, e qualquer outra falha não pode derrubar a
+    // proposta: esta busca é complemento, não fundação
+    return [];
+  }
+}
+/**
  * Junta o material que o proposer precisa pra escrever um diff que aplica.
  * Sem `excerpts`, não há o que propor — e é melhor dizer isso do que produzir
  * um diff contra arquivo que ninguém leu.
@@ -281,6 +409,14 @@ export async function gatherSourceMaterial(
   // termos crescem conforme a leitura: começam no chamado/análise e ganham o
   // que o próprio código revela (eventos, funções chamadas, flags)
   const terms = extractIdentifiers(contextText);
+  /*
+   * Cópia dos termos que vieram DO CHAMADO/ANÁLISE. Só eles viram busca no
+   * repositório: os colhidos do código já estão satisfeitos no arquivo que os
+   * revelou, e são genéricos o bastante (`of_get_row`, `i_sistema`) pra casar
+   * com meio sistema — foi o que trouxe quatro telas de auditoria sem relação
+   * com o chamado.
+   */
+  const termosDoContexto = [...terms];
 
   /*
    * O texto do chamado e o print costumam entregar o objeto de graça: o título
@@ -351,9 +487,49 @@ export async function gatherSourceMaterial(
   }
 
   /*
-   * Segunda passada: os ancestrais dos objetos já lidos. É o que leva a análise
+   * Segunda passada: busca literal no repositório — ANTES dos ancestrais.
+   *
+   * Responde as duas perguntas que a análise costuma terminar fazendo e que
+   * antes viravam tarefa manual do dev: "quem desenha a tela que mostra este
+   * texto" (literal do chamado) e "quem chama esta função" (termo citado no
+   * código lido e definido em lugar nenhum do material).
+   *
+   * Vem antes porque é dirigida: um arquivo que menciona o símbolo que falta é
+   * mais provável de conter a resposta do que um ancestral genérico. Medido no
+   * SMART-51229: os ancestrais (`u_datawindow_padrao`, `u_dw_pac`) sozinhos
+   * comeram 164 mil dos 240 mil caracteres do orçamento, e a busca dirigida nem
+   * chegava a rodar.
+   */
+  if (excerpts.length < MAX_FILES && total < MAX_TOTAL_CHARS) {
+    const literais = extractQuotedLiterals(contextText);
+    const semDefinicao = termsWithoutDefinition(excerpts, termosDoContexto);
+    const padroes = [
+      ...literais,
+      ...literais.map(asciiFallback).filter((p): p is string => p !== null),
+      ...semDefinicao,
+    ];
+
+    for (const path of await filesMentioning(repo.root, padroes)) {
+      if (excerpts.length >= MAX_FILES || total >= MAX_TOTAL_CHARS) break;
+      if (excerpts.some((e) => e.path === path)) continue;
+
+      const content = await read(path);
+      if (content === null) continue;
+
+      // o literal também vira termo de recorte: é ele que marca o trecho certo
+      // dentro de um arquivo que pode ter milhares de linhas
+      for (const literal of [...literais, ...semDefinicao]) {
+        if (!terms.some((t) => t.toLowerCase() === literal.toLowerCase())) terms.push(literal);
+      }
+      add(path, content);
+    }
+  }
+
+  /*
+   * Terceira passada: os ancestrais dos objetos já lidos. É o que leva a análise
    * da tela até o user object onde a lógica mora — a lacuna que fez o
-   * SMART-50927 girar em falso.
+   * SMART-50927 girar em falso. Fica por último porque é a mais larga: entra com
+   * o orçamento que sobrar depois do material dirigido.
    */
   const pending = [...ancestors].filter(
     (name) => !objectNames.some((o) => o.toLowerCase() === name.toLowerCase()),

@@ -44,6 +44,17 @@ solicitação, criado ao final do atendimento.
 | [2026-08-21-11](2026-08-21-11-direcionamento-do-dev-na-criacao.md) | Direcionamento do dev na criação do card |
 | [2026-08-21-12](2026-08-21-12-guia-de-primeiros-passos.md) | Guia de primeiros passos e boas práticas |
 | [2026-08-21-13](2026-08-21-13-pendencia-configuracao-de-repositorio.md) | **Em aberto:** como o dev configura o repositório (decisão de arquitetura) |
+| [2026-08-24-01](2026-08-24-01-abrangencia-do-diagnostico.md) | Abrangência do diagnóstico — achar as janelas irmãs com o mesmo defeito |
+| [2026-08-24-02](2026-08-24-02-reconciliacao-pixeon-intelligence.md) | Reconciliação do documento Pixeon Intelligence com os sistemas que já rodam |
+| [2026-08-24-03](2026-08-24-03-trace-no-proposer.md) | Trace do app_trace passa a chegar também ao proposer |
+| [2026-08-24-04](2026-08-24-04-duas-identidades-do-bitbucket.md) | Bitbucket: e-mail autentica a API, usuário autentica o push (API token) |
+| [2026-08-24-05](2026-08-24-05-corpo-vazio-com-content-type-json.md) | Corpo vazio com content-type JSON quebrava toda rota sem corpo |
+| [2026-08-24-06](2026-08-24-06-jql-sem-filtro-de-resolucao.md) | JQL de chamados atribuídos: filtrar por categoria de situação, não por resolução (SMART-51229) |
+| [2026-08-24-07](2026-08-24-07-trace-em-utf16-derrubava-a-criacao-do-card.md) | Trace em UTF-16 derrubava a criação do card com 500 (22P05) |
+| [2026-08-24-08](2026-08-24-08-jql-pelas-colunas-do-quadro.md) | Aviso de chamados passa a espelhar as colunas do quadro |
+| [2026-08-24-09](2026-08-24-09-analise-cortada-e-auditoria-cega.md) | Análise cortada no teto de tokens, e a auditoria não sabia dizer |
+| [2026-08-24-10](2026-08-24-10-a-tela-passa-a-explicar-a-jql.md) | Configurações → Jira passa a explicar (e conferir) a consulta |
+| [2026-08-25-01](2026-08-25-01-por-que-a-ia-nao-propunha-o-diff.md) | "Falta material para propor o diff": o orçamento é que era pequeno |
 
 ## Template
 

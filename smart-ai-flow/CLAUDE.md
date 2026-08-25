@@ -46,7 +46,11 @@ Duas paradas antecipadas, ambas deliberadas:
 ```
 src/
   domain/        stages.ts (máquina de estados) · card.ts · skill.ts
+                 bitbucketIdentity.ts (e-mail autentica a API, usuário o push)
+                 traceSection.ts (bloco do app_trace nos dois agentes)
                  jiraComment.ts (template de entrega do time)
+                 attachmentText.ts (trace em UTF-16, NUL que o Postgres recusa)
+                 jqlStatuses.ts (o que a JQL esconde, pra legenda da tela)
   agents/        contracts.ts (Zod + parser tolerante) · analyzer.ts
                  proposer.ts · jsonCall.ts (retentativa dirigida)
   orchestrator/  orchestrator.ts (roda os estágios de IA, audita em Run)
@@ -56,10 +60,11 @@ src/
                  monitor.ts · jobQueue.ts · crypto.ts · costs.ts
                  *Repository.ts (Prisma)
   http/          routes.ts (Fastify) · schemas.ts (Zod)
+                 jsonBodyParser.ts (corpo vazio com content-type json)
 modules/         briefing por sistema/módulo do cliente
   smartdesktop/  atende/ agenda/ mwsus/ cadgf/ pacdel/ cirurg/  smartweb/
 prisma/          User · Card · History · Run · Job · PlatformSettings
-tests/           vitest (86 testes)
+tests/           vitest (151 testes)
 ```
 
 ## Os dois repositórios do cliente

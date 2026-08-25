@@ -112,6 +112,20 @@ const FILES: SourceFile[] = [
       "end event",
     ].join("\n"),
   },
+  {
+    // Irmã de w_confirm_agm: mesmo evento, mesmo tipo de controle, NENHUMA
+    // aresta entre as duas. Só aparece via /siblings (docs/16).
+    relativePath: "ag/ag.pbl.src/w_irma_agm.srw",
+    content: [
+      "$PBExportHeader$w_irma_agm.srw",
+      "global type w_irma_agm from w_sheet_gen",
+      "end type",
+      "type dw_agm18tab from u_datawindow_padrao within w_irma_agm",
+      "end type",
+      "event zoom;call super::zoom;CORPO_DA_IRMA_AGM",
+      "end event",
+    ].join("\n"),
+  },
 ];
 
 let app: FastifyInstance;
@@ -591,5 +605,49 @@ describe("GET /docs (Swagger UI)", () => {
   it("responde com a página de documentação", async () => {
     const res = await app.inject({ method: "GET", url: "/docs" });
     expect(res.statusCode).toBe(200);
+  });
+});
+
+describe("GET /objects/:name/events/:eventName/siblings", () => {
+  it("acha a janela irmã que não tem nenhuma aresta com o objeto raiz", async () => {
+    const res = await app.inject({
+      method: "GET",
+      url: "/objects/w_confirm_agm/events/zoom/siblings?owner=dw_agm18tab",
+    });
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(body.controlType).toBe("u_datawindow_padrao");
+    expect(body.siblings.map((s: { object: { name: string } }) => s.object.name)).toEqual(["w_irma_agm"]);
+    expect(body.siblings[0].event.body).toContain("CORPO_DA_IRMA_AGM");
+  });
+
+  it("não marca truncado quando a lista inteira cabe no limit", async () => {
+    const res = await app.inject({
+      method: "GET",
+      url: "/objects/w_confirm_agm/events/zoom/siblings?owner=dw_agm18tab&limit=1",
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ count: 1, truncated: false });
+  });
+
+  it("404 quando o objeto raiz não existe", async () => {
+    const res = await app.inject({
+      method: "GET",
+      url: "/objects/w_inexistente/events/zoom/siblings?owner=dw_agm18tab",
+    });
+    expect(res.statusCode).toBe(404);
+  });
+
+  it("404 quando o controle não existe no objeto raiz", async () => {
+    const res = await app.inject({
+      method: "GET",
+      url: "/objects/w_confirm_agm/events/zoom/siblings?owner=dw_inexistente",
+    });
+    expect(res.statusCode).toBe(404);
+  });
+
+  it("400 quando owner não é informado", async () => {
+    const res = await app.inject({ method: "GET", url: "/objects/w_confirm_agm/events/zoom/siblings" });
+    expect(res.statusCode).toBe(400);
   });
 });

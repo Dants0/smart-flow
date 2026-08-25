@@ -49,9 +49,16 @@ model User {
   // Identidade e credencial do Bitbucket, por usuário: o commit e o PR são DELE,
   // não de um robô da plataforma. A app password é cifrada (mesmo esquema da
   // senha do Jira — precisa ser reversível pro Basic Auth do git/API).
+  //
+  // SÃO DUAS IDENTIDADES, não uma. Com API token da Atlassian (que substituiu a
+  // app password), a Atlassian exige metades diferentes no Basic Auth:
+  //   git push        -> bitbucketUser  (nome de usuário do Bitbucket)
+  //   API REST 2.0    -> bitbucketEmail (e-mail da conta Atlassian)
+  // Com app password o username servia pros dois; por isso existia um campo só.
   gitName                 String?
   gitEmail                String?
   bitbucketUser           String?
+  bitbucketEmail          String?
   bitbucketAppPasswordEnc String?
 
   cards           Card[]
@@ -195,7 +202,7 @@ model PlatformSettings {
 
   // jiraUser/jiraPassword saíram daqui: agora são por usuário (ver model User).
   jiraBaseUrl     String?
-  jiraAssignedJql String  @default("assignee = currentUser() AND resolution = Unresolved ORDER BY created DESC")
+  jiraAssignedJql String  @default("assignee = currentUser() AND status not in (19653, 17600, 20403, 13141, 19738, 19774, 13145, 24901, 19772, 13144) ORDER BY created DESC")
 
   pbInsightUrl String @default("http://127.0.0.1:4500")
 

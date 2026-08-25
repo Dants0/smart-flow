@@ -19,6 +19,7 @@ export interface AuthUser {
   gitName: string | null;
   gitEmail: string | null;
   bitbucketUser: string | null;
+  bitbucketEmail: string | null;
   bitbucketAppPasswordSet: boolean;
 }
 

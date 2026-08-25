@@ -22,6 +22,8 @@ interface DiagnoseBody {
   images?: DiagnosticImage[];
   /** Sugestão do tech lead sobre o chamado, quando existir — colada no prompt como pista a verificar, não fato dado. */
   techLeadComment?: string;
+  /** Teto de ocorrências irmãs do mesmo evento no contexto (só com `event`). 0 desliga. */
+  maxSiblings?: number;
 }
 
 export function registerDiagnoseRoutes(app: FastifyInstance, ctx: AppContext): void {
@@ -55,9 +57,20 @@ export function registerDiagnoseRoutes(app: FastifyInstance, ctx: AppContext): v
             },
             event: {
               type: "object",
-              description: "Quando presente, troca o dump do objeto raiz inteiro por só este evento isolado.",
+              description:
+                "Quando presente, troca o dump do objeto raiz inteiro por só este evento isolado — e anexa ao " +
+                "contexto as outras ocorrências do mesmo evento no mesmo tipo de controle em todo o ws_objects " +
+                "(bloco de abrangência), para o diagnóstico não apontar 1 objeto quando N têm o mesmo defeito.",
               required: ["owner", "name"],
               properties: { owner: { type: "string" }, name: { type: "string" } },
+            },
+            maxSiblings: {
+              type: "number",
+              minimum: 0,
+              maximum: 200,
+              description:
+                "Teto de ocorrências irmãs anexadas ao contexto (default 40, só tem efeito junto com `event`). " +
+                "0 desliga o bloco de abrangência. Cada ocorrência custa até ~2 KB de contexto.",
             },
             provider: {
               type: "string",
@@ -98,7 +111,7 @@ export function registerDiagnoseRoutes(app: FastifyInstance, ctx: AppContext): v
       },
     },
     async (request, reply) => {
-      const { objectName, ticketText, hops, relations, event, provider, model, dryRun, images, techLeadComment } =
+      const { objectName, ticketText, hops, relations, event, provider, model, dryRun, images, techLeadComment, maxSiblings } =
         request.body;
 
       if (provider && !isValidLLMProvider(provider)) {
@@ -124,7 +137,7 @@ export function registerDiagnoseRoutes(app: FastifyInstance, ctx: AppContext): v
 
       let preparation;
       try {
-        preparation = await useCase.prepare(objectName, hops ?? 1, relationTypes, event);
+        preparation = await useCase.prepare(objectName, hops ?? 1, relationTypes, event, { maxSiblings });
       } catch (e) {
         return reply.code(400).send({ error: e instanceof Error ? e.message : String(e) });
       }
@@ -137,6 +150,15 @@ export function registerDiagnoseRoutes(app: FastifyInstance, ctx: AppContext): v
         ancestors: preparation.context.ancestors.map(objectSummary),
         dumpedObjects: preparation.dumpedObjects.map(objectSummary),
         focusedOnEvent: preparation.focusedOnEvent,
+        siblings: preparation.siblings.map((s) => ({
+          objectId: s.object.id,
+          filePath: s.object.filePath,
+          control: s.control.name,
+          event: s.event.name,
+          startLine: s.event.startLine,
+          endLine: s.event.endLine,
+        })),
+        siblingsTruncated: preparation.siblingsTruncated,
         contextSizeChars: preparation.objectContext.length,
         estimatedTokens: Math.round(preparation.objectContext.length / 4),
         imageCount: images?.length ?? 0,

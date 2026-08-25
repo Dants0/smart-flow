@@ -3,6 +3,7 @@ import { retrieveContext } from '../infra/pbInsight';
 import { loadModuleContext } from '../infra/moduleContext';
 import { getSettings } from '../infra/settingsRepository';
 import { buildSkillSection } from '../domain/skill';
+import { buildTraceSection } from '../domain/traceSection';
 import { AnalyzerOutputSchema, type AnalyzerOutput } from './contracts';
 import type { Card } from '../domain/card';
 import type { LlmResult } from '../infra/llm';
@@ -39,6 +40,13 @@ Regras:
   errado, diga isso em reasoning[0] — a análise sai contra o codebase errado.
 - Cite em affectedObjects apenas objetos que apareceram no contexto de código.
   Objeto que você supõe existir vai em reasoning como hipótese, não aqui.
+- **affectedObjects tem que cobrir TODOS os objetos com o defeito, não só o
+  citado no chamado.** Quando o contexto trouxer a seção "Mesmo evento em
+  outros objetos (abrangência)", examine cada um: os que têm o mesmo defeito
+  entram em affectedObjects com o reason dizendo que é a mesma causa raiz; os
+  que já estão corretos ficam de fora, e um deles vale ser citado em reasoning
+  como o padrão correto de referência. Corrigir 1 objeto quando N têm o mesmo
+  defeito é entrega incompleta, não escopo enxuto.
 - Aponte objetos concretos do codebase (windows, datawindows, NVOs, procedures).
 - Considere diferenças entre ambientes Oracle e SQL Server quando relevante.`;
 
@@ -52,18 +60,7 @@ export async function runAnalysis(card: Card): Promise<AnalysisResult> {
     [card.devHints ?? '', card.rawTicket].join('\n'),
   );
 
-  const traceSection = card.traceAnalysis?.length
-    ? [
-        '',
-        '# Diagnóstico de trace (app_trace)',
-        'O microserviço app_trace já processou o(s) log(s) de trace anexado(s) e chegou',
-        'ao diagnóstico abaixo. Use como evidência de execução real — ela pesa mais que',
-        'suposição, então cruze com o resto do contexto antes de fechar a causa raiz.',
-        ...card.traceAnalysis.map(
-          (t) => `\n## ${t.filename} (${t.eventCount} eventos)\n${t.strategicAnalysis}`,
-        ),
-      ].join('\n')
-    : '';
+  const traceSection = buildTraceSection(card.traceAnalysis, 'analise');
 
   /*
    * O que o dev escreveu na criação do card. Vem ANTES do resto de propósito:
@@ -100,9 +97,13 @@ export async function runAnalysis(card: Card): Promise<AnalysisResult> {
     system: SYSTEM + buildSkillSection(skills),
     userText: userPrompt,
     images: card.images,
-    // 2000 deixava pouca folga: análise com muitos objetos afetados chegava
-    // cortada e o JSON não fechava (o card ia pra ERRO sem motivo real).
-    maxTokens: 4000,
+    // Teto de saída. Já subiu duas vezes (2000 -> 4000 -> 16000) pelo mesmo
+    // sintoma: análise longa chega cortada, o JSON não fecha e o card vai pra
+    // ERRO por um motivo que não é erro. A última análise que passou gastou
+    // 3492 dos 4000 — 87% do teto, ou seja, o próximo chamado um pouco maior
+    // ia estourar de qualquer jeito. Sonnet 5 entrega bem mais que isso, e o
+    // custo é por token gasto, não por teto pedido: teto alto não cobra a mais.
+    maxTokens: 16000,
   });
 
   return { output, usage, grounded };

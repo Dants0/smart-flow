@@ -1,11 +1,16 @@
 /**
  * Abertura de pull request no Bitbucket Cloud (API 2.0).
  *
- * Autentica com **App Password do próprio dev** — o PR precisa aparecer como
- * dele, não de um robô da plataforma. A credencial é a mesma usada no push.
+ * Autentica com a **credencial do próprio dev** (API token da Atlassian ou app
+ * password antiga) — o PR precisa aparecer como dele, não de um robô da
+ * plataforma. O segredo é o mesmo usado no push, mas a IDENTIDADE não: aqui vai
+ * o e-mail da conta Atlassian, no push vai o nome de usuário do Bitbucket.
  */
 export interface BitbucketCredentials {
+  /** Nome de usuário do Bitbucket — usado no git push, NÃO aqui. */
   user: string;
+  /** E-mail da conta Atlassian — é o que a API REST 2.0 aceita no Basic Auth. */
+  email: string;
   appPassword: string;
 }
 
@@ -25,8 +30,14 @@ export interface PullRequest {
 
 export class BitbucketError extends Error {}
 
-function authHeader(creds: BitbucketCredentials): string {
-  return 'Basic ' + Buffer.from(`${creds.user}:${creds.appPassword}`).toString('base64');
+/**
+ * `email`, não `user`. A documentação da Atlassian é explícita: API token +
+ * e-mail para as APIs do Bitbucket, API token + nome de usuário para os
+ * comandos Git. Usar o username aqui devolve 401 com token novo — e devolvia
+ * 200 na época da app password, que é por que isso passou despercebido.
+ */
+export function authHeader(creds: BitbucketCredentials): string {
+  return 'Basic ' + Buffer.from(`${creds.email}:${creds.appPassword}`).toString('base64');
 }
 
 export async function createPullRequest(
@@ -50,7 +61,9 @@ export async function createPullRequest(
 
   if (resp.status === 401 || resp.status === 403) {
     throw new BitbucketError(
-      'o Bitbucket recusou sua credencial (verifique usuário e app password em Configurações > Minha conta, e se a app password tem permissão de Pull requests: write)',
+      'o Bitbucket recusou sua credencial ao abrir o PR. Em Configurações > Minha conta, ' +
+        'confira o "E-mail da conta Atlassian" (é ele que autentica a API — o usuário do ' +
+        'Bitbucket vale só pro push) e se o token tem o escopo write:pullrequest:bitbucket',
     );
   }
 
@@ -121,14 +134,29 @@ export async function checkRepositoryAccess(
     return { fullName, ok: false, detail: err instanceof Error ? err.message : 'sem resposta' };
   }
 
+  // As três mensagens apontam pro campo errado certo: com API token o 401 é
+  // quase sempre e-mail no lugar do username (ou vice-versa), e o Bitbucket
+  // responde 404 — não 403 — quando falta escopo, pra não revelar o repositório.
   if (resp.status === 401) {
-    return { fullName, ok: false, detail: 'usuário ou app password inválidos' };
+    return {
+      fullName,
+      ok: false,
+      detail:
+        'credencial recusada — se você usa API token, o campo "E-mail da conta Atlassian" ' +
+        'precisa ser o e-mail (o usuário do Bitbucket vale só pro push)',
+    };
   }
   if (resp.status === 403) {
     return { fullName, ok: false, detail: 'sem permissão para este repositório' };
   }
   if (resp.status === 404) {
-    return { fullName, ok: false, detail: 'repositório não encontrado para esta credencial' };
+    return {
+      fullName,
+      ok: false,
+      detail:
+        'repositório não encontrado para esta credencial — confira os escopos do token ' +
+        '(read/write de repository e pull request)',
+    };
   }
   if (!resp.ok) return { fullName, ok: false, detail: `HTTP ${resp.status}` };
 

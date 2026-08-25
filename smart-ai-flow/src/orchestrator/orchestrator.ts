@@ -39,10 +39,15 @@ export async function advance(
       // Falha de contrato guarda a resposta crua: sem isso a linha em Run dizia
       // só "JSON inválido" e não sobrava com que investigar depois.
       const raw = err instanceof AgentOutputError ? `\n--- resposta do modelo ---\n${err.raw.slice(0, 2000)}` : '';
+      const usage = err instanceof AgentOutputError ? err.usage : undefined;
       await recordRun({
         cardId: current.id,
         stage: stageBefore,
         ok: false,
+        provider: usage?.provider,
+        model: usage?.model,
+        inputTokens: usage?.inputTokens,
+        outputTokens: usage?.outputTokens,
         errorMessage: message + raw,
       });
       current = moveCard(current, Stage.ERRO, 'IA', message);

@@ -16,6 +16,7 @@
 - [`13-comentario-tech-lead-no-diagnostico.md`](./13-comentario-tech-lead-no-diagnostico.md) — campo opcional "Comentário Tech Lead" na aba de Diagnóstico (+ CLI/API); vira seção própria no prompt como pista a verificar, não fato dado; persistido no diagnóstico salvo.
 - [`14-fix-notas-evento-e-apagar-ticket.md`](./14-fix-notas-evento-e-apagar-ticket.md) — notas de link só apareciam em tooltip (corrigido p/ texto visível); evento exigia 2 campos sem validação (agora avisa); `DELETE /tickets/:id` implementado — e achou 2 bugs de infra que quebravam TODO `DELETE` da API no browser real (CORS default + Content-Type em corpo vazio), invisíveis para `.inject()`.
 - [`15-filtro-por-tipo-de-objeto-na-busca.md`](./15-filtro-por-tipo-de-objeto-na-busca.md) — filtro por PBObjectType (Window/DataWindow/Function/...) em `GET /search` (+ CLI/UI); filtra antes do `limit`, não depois.
+- [`16-abrangencia-do-diagnostico.md`](./16-abrangencia-do-diagnostico.md) — diagnóstico ancorado num objeto só via 1 janela quando 6 tinham o mesmo defeito (SMART-50927); `FindPatternSiblingsUseCase` anexa ao contexto as outras ocorrências do mesmo evento no mesmo tipo de controle, e o prompt ganha seção `Abrangência`.
 
 Cada entrada numerada documenta um incremento de desenvolvimento: o que foi
 entregue, validado com dados reais do repositório, decisões tomadas e por quê,

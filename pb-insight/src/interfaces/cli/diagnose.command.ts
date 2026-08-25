@@ -23,7 +23,7 @@ import { DEFAULT_GRAPH_PATH, DEFAULT_WS_OBJECTS_ROOT, parseArgs } from "./shared
 //        [--event <nome> --owner <controle>] [--provider claude|openai] [--model <id>]
 //        [--graph .data/graph.json] [--root <ws_objects>]
 //        [--images screenshot1.png,screenshot2.png]
-//        [--tech-lead comentario.txt]
+//        [--tech-lead comentario.txt] [--max-siblings N]
 //
 // Por padrão o contexto enviado ao modelo é o objeto + ancestrais +
 // embeds/references de 1 salto (ver DEFAULT_DUMP_RELATION_TYPES no use case
@@ -35,6 +35,12 @@ import { DEFAULT_GRAPH_PATH, DEFAULT_WS_OBJECTS_ROOT, parseArgs } from "./shared
 // isolado (ver docs/03: a causa raiz costuma caber num único evento; dumpar
 // o objeto todo é ruído). Ex.:
 //   npm run diagnose -- w_confirm_agm --ticket t.txt --event zoom --owner dw_agm18tab --relations none
+//
+// Com --event/--owner o contexto também passa a incluir as OUTRAS ocorrências
+// do mesmo evento no mesmo tipo de controle em todo o ws_objects (ver
+// FindPatternSiblingsUseCase). É o que evita o diagnóstico apontar 1 janela
+// quando N têm o mesmo defeito — janelas irmãs não têm aresta entre si, então
+// nunca entravam pelo grafo de dependências. --max-siblings 0 desliga.
 //
 // --provider escolhe o LLM: "claude" (default, claude-sonnet-5 — NÃO o
 // modelo mais caro) ou "openai" (gpt-4o-mini). --model sobrescreve o modelo
@@ -142,7 +148,9 @@ const useCase = new DiagnoseTicketUseCase(repository, sourceFiles, llm);
 
 let preparation;
 try {
-  preparation = await useCase.prepare(objectName, hops, relationTypes, eventFocus);
+  preparation = await useCase.prepare(objectName, hops, relationTypes, eventFocus, {
+    maxSiblings: flags["max-siblings"] === undefined ? undefined : Number(flags["max-siblings"]),
+  });
 } catch (e) {
   console.error(e instanceof Error ? e.message : String(e));
   process.exit(1);
@@ -164,6 +172,18 @@ console.log(
 );
 for (const obj of preparation.dumpedObjects) {
   console.log(`  - ${obj.id} [${obj.type}]`);
+}
+if (preparation.siblings.length > 0) {
+  console.log(
+    `Abrangência: ${preparation.siblings.length} outra(s) ocorrência(s) do mesmo evento${
+      preparation.siblingsTruncated ? " (lista cortada em --max-siblings)" : ""
+    }`,
+  );
+  for (const s of preparation.siblings) {
+    console.log(`  - ${s.object.id} :: ${s.control.name}.${s.event.name} (linha ${s.event.startLine})`);
+  }
+} else if (preparation.focusedOnEvent) {
+  console.log("Abrangência: nenhuma outra ocorrência do mesmo evento no grafo");
 }
 console.log(`Provedor:    ${provider}${modelOverride ? ` (modelo: ${modelOverride})` : " (modelo default)"}`);
 if (images?.length) console.log(`Imagens:     ${images.length} anexada(s) como evidência visual`);

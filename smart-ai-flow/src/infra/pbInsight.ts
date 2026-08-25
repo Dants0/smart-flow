@@ -22,6 +22,20 @@ const MAX_HITS = 6;
  */
 const SNIPPET_CHARS = 12000;
 
+/**
+ * Quando o chamado bate num evento sobrescrito, o MESMO evento costuma estar
+ * replicado em N outras janelas que não têm nenhuma aresta com essa — só
+ * compartilham o ancestral do controle. Sem trazê-las, a análise diagnostica
+ * e corrige 1 objeto e o bug fica em produção nos outros (SMART-50927:
+ * 1 janela apontada, 6 com o mesmo defeito). Ver pb-insight/docs/16.
+ *
+ * Teto global (não por evento) porque o custo é do prompt inteiro, e corpo
+ * curto porque o que distingue "já corrigida" de "com o defeito" é a cláusula
+ * de entrada do evento — os primeiros caracteres.
+ */
+const MAX_SIBLINGS = 12;
+const SIBLING_SNIPPET_CHARS = 1500;
+
 const STOPWORDS = new Set([
   'para', 'como', 'sistema', 'chamado', 'incidente', 'erro', 'quando', 'depois',
   'antes', 'tela', 'clicar', 'abrir', 'modulo', 'módulo', 'usuario', 'usuário',
@@ -109,6 +123,17 @@ interface EventBodyResponse {
   }[];
 }
 
+interface SiblingsResponse {
+  controlType: string;
+  count: number;
+  truncated: boolean;
+  siblings: {
+    object: ObjectSummary;
+    control: string;
+    event: { name: string; body: string; startLine: number; endLine: number };
+  }[];
+}
+
 interface PbTicket {
   id: string;
   externalId: string;
@@ -160,6 +185,42 @@ export interface RetrievedContext {
   grounded: boolean;
 }
 
+/**
+ * Busca as outras ocorrências do evento que acabou de entrar no contexto e as
+ * acumula num bloco separado. Best-effort: pb-insight sem o endpoint (versão
+ * antiga) ou fora do ar só custa a abrangência, nunca a análise.
+ */
+async function collectSiblings(
+  pbInsightUrl: string,
+  match: SearchMatch,
+  out: string[],
+  seen: Set<string>,
+): Promise<void> {
+  if (!match.event || out.length >= MAX_SIBLINGS) return;
+
+  let resp: SiblingsResponse;
+  try {
+    resp = await pbInsightGet<SiblingsResponse>(
+      pbInsightUrl,
+      `/objects/${encodeURIComponent(match.object.name)}/events/${encodeURIComponent(match.event.name)}` +
+        `/siblings?owner=${encodeURIComponent(match.event.owner)}&limit=${MAX_SIBLINGS}`,
+    );
+  } catch {
+    return;
+  }
+
+  for (const s of resp.siblings) {
+    if (out.length >= MAX_SIBLINGS) return;
+    const key = `${s.object.name}::${s.control}::${s.event.name}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(
+      `// ${s.object.filePath} :: ${s.object.name}.${s.control}.${s.event.name} ` +
+        `(linhas ${s.event.startLine}-${s.event.endLine})\n${s.event.body.slice(0, SIBLING_SNIPPET_CHARS)}`,
+    );
+  }
+}
+
 export async function retrieveContext(module: string, query: string): Promise<RetrievedContext> {
   const keywords = extractKeywords(query);
   if (keywords.length === 0) {
@@ -172,6 +233,8 @@ export async function retrieveContext(module: string, query: string): Promise<Re
   const { pbInsightUrl } = await getSettings();
   const seen = new Set<string>();
   const blocks: string[] = [];
+  const siblingBlocks: string[] = [];
+  const siblingsSeen = new Set<string>();
 
   /*
    * Primeiro as FRASES do chamado, encurtando até achar. A mensagem de tela é
@@ -224,6 +287,7 @@ export async function retrieveContext(module: string, query: string): Promise<Re
             blocks.push(
               `// ${match.object.filePath} :: ${match.object.name}.${match.event.owner}.${match.event.name} (linhas ${match.event.startLine}-${match.event.endLine})\n${body.slice(0, SNIPPET_CHARS)}`,
             );
+            await collectSiblings(pbInsightUrl, match, siblingBlocks, siblingsSeen);
             continue;
           }
         } catch {
@@ -263,7 +327,17 @@ export async function retrieveContext(module: string, query: string): Promise<Re
     };
   }
 
-  return { grounded: blocks.length > 0, text: blocks.join('\n\n') + similarBlock };
+  const abrangenciaBlock = siblingBlocks.length
+    ? '\n\n# Mesmo evento em outros objetos (abrangência)\n' +
+      'Estes objetos sobrescrevem o MESMO evento no MESMO tipo de controle dos trechos acima.\n' +
+      'Não têm relação de dependência com eles — compartilham só o ancestral do controle, por isso\n' +
+      'não apareceriam numa busca por objeto. Verifique quais têm o mesmo defeito e quais já estão\n' +
+      'corretas, e inclua os defeituosos em affectedObjects: corrigir só o objeto citado no chamado\n' +
+      'deixa o bug em produção nos demais.\n\n' +
+      siblingBlocks.join('\n\n')
+    : '';
+
+  return { grounded: blocks.length > 0, text: blocks.join('\n\n') + abrangenciaBlock + similarBlock };
 }
 
 /**

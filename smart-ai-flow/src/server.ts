@@ -5,6 +5,7 @@ import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import jwt from '@fastify/jwt';
 import { routes } from './http/routes';
+import { parseJsonBody } from './http/jsonBodyParser';
 import { recoverOrphanJobs, startWorker } from './infra/jobQueue';
 
 // bodyLimit maior que o default (1MB) porque cards podem carregar
@@ -20,6 +21,26 @@ if (!process.env.ENCRYPTION_KEY) {
   app.log.error('ENCRYPTION_KEY ausente no .env — necessária pra cifrar credenciais do Jira.');
   process.exit(1);
 }
+
+/*
+ * Corpo vazio com `content-type: application/json` é REQUISIÇÃO VÁLIDA aqui.
+ *
+ * O parser default do Fastify responde 400 FST_ERR_CTP_EMPTY_JSON_BODY, e isso
+ * quebrava TODA rota sem corpo chamada pelo navegador — o "Testar conexão" do
+ * Bitbucket e do Jira, o destravar do Jira, o dispensar chamado e o DELETE de
+ * usuário. O front manda o header em toda chamada, com ou sem corpo.
+ *
+ * Invisível para os testes: `app.inject()` não põe content-type sozinho, então
+ * a suíte passava enquanto o app real dava 400. Mesma classe de bug já vista no
+ * pb-insight (ver docs/14 de lá).
+ */
+app.addContentTypeParser('application/json', { parseAs: 'string' }, (_req, body, done) => {
+  try {
+    done(null, parseJsonBody(body));
+  } catch (err) {
+    done(err as Error, undefined);
+  }
+});
 
 app.register(cors, { origin: true });
 app.register(jwt, { secret: jwtSecret });

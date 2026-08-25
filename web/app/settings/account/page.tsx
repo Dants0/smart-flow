@@ -23,6 +23,7 @@ export default function AccountSettingsPage() {
   const [gitName, setGitName] = useState("");
   const [gitEmail, setGitEmail] = useState("");
   const [bitbucketUser, setBitbucketUser] = useState("");
+  const [bitbucketEmail, setBitbucketEmail] = useState("");
   const [bitbucketAppPassword, setBitbucketAppPassword] = useState("");
 
   useEffect(() => {
@@ -34,6 +35,7 @@ export default function AccountSettingsPage() {
         setGitName(u.gitName ?? "");
         setGitEmail(u.gitEmail ?? "");
         setBitbucketUser(u.bitbucketUser ?? "");
+        setBitbucketEmail(u.bitbucketEmail ?? "");
       })
       .catch((err) => setError(err instanceof Error ? err.message : "falha ao carregar"));
   }, []);
@@ -49,6 +51,7 @@ export default function AccountSettingsPage() {
         gitName,
         gitEmail,
         bitbucketUser,
+        bitbucketEmail,
       };
       if (password.trim()) patch.password = password.trim();
       if (jiraPassword.trim()) patch.jiraPassword = jiraPassword.trim();
@@ -71,7 +74,9 @@ export default function AccountSettingsPage() {
   // gravada, então testar agora responderia sobre a senha antiga.
   const jiraDirty = !!jiraPassword.trim() || jiraUser !== (me?.jiraUser ?? "");
   const bitbucketDirty =
-    !!bitbucketAppPassword.trim() || bitbucketUser !== (me?.bitbucketUser ?? "");
+    !!bitbucketAppPassword.trim() ||
+    bitbucketUser !== (me?.bitbucketUser ?? "") ||
+    bitbucketEmail !== (me?.bitbucketEmail ?? "");
 
   if (!me) {
     return (
@@ -176,9 +181,16 @@ export default function AccountSettingsPage() {
       <FieldGroup title="Versionamento (Bitbucket)">
         <p className="text-xs leading-relaxed text-zinc-400">
           Usado quando você manda a plataforma commitar e abrir o PR. Opcional: sem isso, a
-          esteira funciona igual e você versiona na mão. A <strong>app password</strong> é criada
-          em Bitbucket → Personal settings → App passwords, com permissão de{" "}
-          <em>Repositories: write</em> e <em>Pull requests: write</em>.
+          esteira funciona igual e você versiona na mão. Crie um{" "}
+          <strong>API token</strong> em id.atlassian.com → Security → API tokens, escolhendo o
+          app <em>Bitbucket</em> e os escopos <em>read/write de repository</em> e{" "}
+          <em>read/write de pull request</em>. As app passwords antigas continuam funcionando,
+          mas a Atlassian não deixa mais criar novas.
+        </p>
+        <p className="text-xs leading-relaxed text-zinc-400">
+          A Atlassian pede <strong>identidades diferentes</strong> para cada uso do token: o{" "}
+          <strong>usuário</strong> autentica o <em>git push</em>, o <strong>e-mail</strong>{" "}
+          autentica a API que abre o PR. Por isso os dois campos abaixo.
         </p>
 
         <TextField
@@ -200,18 +212,26 @@ export default function AccountSettingsPage() {
           value={bitbucketUser}
           onChange={setBitbucketUser}
           placeholder="seu.usuario"
+          hint="Autentica o git push. É o Username do seu perfil, não o e-mail."
         />
         <TextField
-          label="App password"
+          label="E-mail da conta Atlassian"
+          value={bitbucketEmail}
+          onChange={setBitbucketEmail}
+          placeholder="voce@pixeon.com"
+          hint="Autentica a API que abre o PR. Em branco, usa o usuário acima — o que só funciona com app password antiga."
+        />
+        <TextField
+          label="API token (ou app password)"
           type="password"
           value={bitbucketAppPassword}
           onChange={setBitbucketAppPassword}
           placeholder={
             me.bitbucketAppPasswordSet
-              ? "•••••••• (já configurada — deixe em branco pra manter)"
-              : "app password do Bitbucket"
+              ? "•••••••• (já configurado — deixe em branco pra manter)"
+              : "API token do Bitbucket"
           }
-          hint="Guardada cifrada (AES-256-GCM). Nunca é gravada no .git/config do seu working copy."
+          hint="Guardado cifrado (AES-256-GCM). Nunca é gravado no .git/config do seu working copy."
         />
 
         <BitbucketCheck

@@ -45,6 +45,20 @@ export const ProposerOutputSchema = z.object({
 export type ProposerOutput = z.infer<typeof ProposerOutputSchema>;
 
 /**
+ * Números de uma chamada ao modelo, sem o texto (que já vive em `raw`).
+ * Estruturalmente compatível com `LlmResult` — declarado aqui pra este módulo
+ * de contratos não depender da camada de infraestrutura.
+ */
+export interface LlmUsage {
+  provider: string;
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+  /** true = a resposta bateu no teto de saída e chegou cortada. */
+  truncated: boolean;
+}
+
+/**
  * Falha de contrato: o modelo respondeu, mas não no formato combinado.
  * Carrega a resposta crua e o consumo — sem isso a linha em Run registrava
  * "0 tokens, modelo desconhecido" e não sobrava evidência nenhuma pra investigar.
@@ -53,6 +67,7 @@ export class AgentOutputError extends Error {
   constructor(
     message: string,
     readonly raw: string,
+    readonly usage?: LlmUsage,
   ) {
     super(message);
     this.name = 'AgentOutputError';

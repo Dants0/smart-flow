@@ -38,9 +38,10 @@ export async function callJsonAgent<T>(
     // Cortado no limite de tokens é outro problema: o JSON está incompleto, não
     // malformado. Repetir com o mesmo teto daria o mesmo corte — dobra o espaço
     // e pede resposta mais enxuta.
+    const tetoRetry = first.truncated ? req.maxTokens * 2 : req.maxTokens;
     const retry = await callLlm({
       ...req,
-      maxTokens: first.truncated ? req.maxTokens * 2 : req.maxTokens,
+      maxTokens: tetoRetry,
       ...(first.truncated
         ? {
             system: `${req.system}\n\nA resposta anterior estourou o limite de tokens e chegou cortada. Seja mais conciso: menos itens em listas, frases mais curtas. O JSON precisa fechar.`,
@@ -66,14 +67,35 @@ export async function callJsonAgent<T>(
       ].join('\n'),
     });
 
-    const output = parseAgentOutput(schema, retry.text);
-    return {
-      output,
-      usage: {
-        ...retry,
-        inputTokens: first.inputTokens + retry.inputTokens,
-        outputTokens: first.outputTokens + retry.outputTokens,
-      },
-    };
+    // Segunda falha: sobe com o consumo SOMADO das duas tentativas e com o
+    // sinal de corte. É o que a linha em Run precisa pra dizer, depois, se o
+    // caso foi teto de saída baixo (aumenta o teto) ou modelo devolvendo lixo
+    // (mexe no prompt) — sem isso a auditoria gravava "0 tokens, desconhecido".
+    try {
+      const output = parseAgentOutput(schema, retry.text);
+      return {
+        output,
+        usage: {
+          ...retry,
+          inputTokens: first.inputTokens + retry.inputTokens,
+          outputTokens: first.outputTokens + retry.outputTokens,
+        },
+      };
+    } catch (erroFinal) {
+      if (!(erroFinal instanceof AgentOutputError)) throw erroFinal;
+      throw new AgentOutputError(
+        retry.truncated
+          ? `${erroFinal.message} — resposta cortada no limite de tokens (${retry.outputTokens} de ${tetoRetry})`
+          : erroFinal.message,
+        erroFinal.raw,
+        {
+          provider: retry.provider,
+          model: retry.model,
+          inputTokens: first.inputTokens + retry.inputTokens,
+          outputTokens: first.outputTokens + retry.outputTokens,
+          truncated: first.truncated || retry.truncated,
+        },
+      );
+    }
   }
 }

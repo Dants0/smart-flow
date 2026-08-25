@@ -36,13 +36,16 @@ export interface PlatformSettings {
 const TRACE_SERVICE_URL = process.env.TRACE_SERVICE_URL || 'http://localhost:8070';
 const PB_INSIGHT_URL = process.env.PB_INSIGHT_URL || 'http://127.0.0.1:4500';
 
+/** Exportado porque a tela de Configurações oferece "restaurar padrão". */
+export const DEFAULT_ASSIGNED_JQL =
+  'assignee = currentUser() AND status not in (19653, 17600, 20403, 13141, 19738, 19774, 13145, 24901, 19772, 13144) ORDER BY created DESC';
+
 const DEFAULTS = {
   model: 'claude-sonnet-5',
   aiProvider: 'anthropic',
   openaiModel: 'gpt-4o',
   traceServiceUrl: TRACE_SERVICE_URL,
-  jiraAssignedJql:
-    'assignee = currentUser() AND resolution = Unresolved ORDER BY created DESC',
+  jiraAssignedJql: DEFAULT_ASSIGNED_JQL,
   pbInsightUrl: PB_INSIGHT_URL,
 };
 

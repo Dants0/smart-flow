@@ -1,4 +1,6 @@
 import type { CardImage, CardTraceFile } from '../domain/card';
+import { decodeAttachmentText } from '../domain/attachmentText';
+import { parseExcludedStatuses } from '../domain/jqlStatuses';
 import { getSettings } from './settingsRepository';
 import {
   blockJiraAuth,
@@ -185,7 +187,7 @@ export async function fetchJiraIssue(userId: string, key: string): Promise<JiraI
       traceFiles.length < MAX_TRACE_FILES
     ) {
       const buf = await downloadAttachment(att.content, creds, userId);
-      traceFiles.push({ name: att.filename, content: buf.toString('utf-8') });
+      traceFiles.push({ name: att.filename, content: decodeAttachmentText(buf) });
     }
   }
 
@@ -201,7 +203,15 @@ interface JiraSearchResponse {
   issues: { key: string; fields: { summary: string } }[];
 }
 
-/** Chamados abertos atribuídos AO USUÁRIO autenticado — só avisa, nunca cria card. */
+/**
+ * Chamados atribuídos AO USUÁRIO autenticado — só avisa, nunca cria card.
+ *
+ * A JQL default espelha as colunas do quadro do time: só chega aqui o que está
+ * até Desenvolvimento. Resolução e categoria de situação NÃO servem pra isso —
+ * "Aguardando Versão Testes" é categoria Pendências, e o SMART-51229 estava
+ * "Em Desenvolvimento" com resolução "Concluída". Ver a migration
+ * 20260824210000 pro mapa de coluna -> id de status.
+ */
 export async function searchAssignedIssues(userId: string): Promise<AssignedIssue[]> {
   const [{ baseUrl, creds }, settings] = await Promise.all([jiraContext(userId), getSettings()]);
 
@@ -287,5 +297,90 @@ export async function addJiraComment(userId: string, key: string, body: string):
 
   if (!resp.ok) {
     throw new Error(`Jira recusou o comentário (HTTP ${resp.status}): ${await resp.text()}`);
+  }
+}
+
+export interface JqlStatus {
+  id: string;
+  name: string;
+}
+
+/**
+ * Resultado de conferir uma JQL ANTES de salvá-la.
+ *
+ * `error` preenchido é JQL recusada pelo Jira — e é o caso que motivou isto:
+ * uma consulta inválida salva pela tela ficava calada, o board respondia 502 e
+ * o dev via "sem chamados" sem nenhuma ligação com a causa.
+ */
+export interface JqlPreview {
+  total: number;
+  keys: string[];
+  /** Situações que a consulta esconde, já com o nome que o Jira mostra. */
+  hidden: JqlStatus[];
+  error?: string;
+}
+
+/**
+ * Roda a JQL com `maxResults` pequeno (é conferência, não listagem) e traduz os
+ * ids de situação da consulta para os nomes que o dev lê no quadro.
+ */
+export async function previewJql(userId: string, jql: string): Promise<JqlPreview> {
+  const { baseUrl, creds } = await jiraContext(userId);
+
+  const url = `${baseUrl}/rest/api/2/search?jql=${encodeURIComponent(jql)}&fields=summary&maxResults=5`;
+  const resp = await jiraFetch(url, creds, userId);
+
+  if (!resp.ok) {
+    // A mensagem do Jira é boa ("O valor 'x' não existe para o campo 'status'")
+    // e é o que o dev precisa ler — repassar é melhor que traduzir.
+    const corpo = await resp.text();
+    let detalhe = corpo.slice(0, 300);
+    try {
+      const j = JSON.parse(corpo) as { errorMessages?: string[] };
+      if (j.errorMessages?.length) detalhe = j.errorMessages.join(' ');
+    } catch {
+      // corpo não-JSON: fica o texto cru mesmo
+    }
+    return { total: 0, keys: [], hidden: [], error: detalhe };
+  }
+
+  const data = (await resp.json()) as { total?: number; issues?: { key: string }[] };
+  return {
+    total: data.total ?? 0,
+    keys: (data.issues ?? []).map((i) => i.key),
+    hidden: await resolveStatuses(baseUrl, creds, userId, parseExcludedStatuses(jql)),
+  };
+}
+
+/**
+ * Traduz o que está na JQL (id ou nome) para `{ id, name }`.
+ *
+ * Falha de tradução não derruba a conferência: a consulta em si já foi validada
+ * pelo Jira, e legenda é conforto — sem ela a tela mostra a JQL como antes.
+ */
+async function resolveStatuses(
+  baseUrl: string,
+  creds: JiraCredentials,
+  userId: string,
+  tokens: string[],
+): Promise<JqlStatus[]> {
+  if (tokens.length === 0) return [];
+
+  try {
+    const resp = await jiraFetch(`${baseUrl}/rest/api/2/status`, creds, userId);
+    if (!resp.ok) return tokens.map((t) => ({ id: t, name: t }));
+
+    const todos = (await resp.json()) as { id: string; name: string }[];
+    const porId = new Map(todos.map((s) => [String(s.id), s.name]));
+    const porNome = new Map(todos.map((s) => [s.name.toLowerCase(), String(s.id)]));
+
+    return tokens.map((t) => {
+      const nomePorId = porId.get(t);
+      if (nomePorId) return { id: t, name: nomePorId };
+      const idPorNome = porNome.get(t.toLowerCase());
+      return idPorNome ? { id: idPorNome, name: t } : { id: t, name: t };
+    });
+  } catch {
+    return tokens.map((t) => ({ id: t, name: t }));
   }
 }

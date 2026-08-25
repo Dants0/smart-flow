@@ -10,6 +10,7 @@ import { resolve, requestNewProposal, retryFromError } from '../orchestrator/orc
 import {
   addJiraComment,
   fetchJiraIssue,
+  previewJql,
   searchAssignedIssues,
   testJiraConnection,
   JiraAuthError,
@@ -23,7 +24,7 @@ import {
   deleteCard as deleteCardRow,
   type CardFilters,
 } from '../infra/cardRepository';
-import { getSettings, updateSettings } from '../infra/settingsRepository';
+import { DEFAULT_ASSIGNED_JQL, getSettings, updateSettings } from '../infra/settingsRepository';
 import { promoteResolvedTicket } from '../infra/pbInsight';
 import { checkResources } from '../infra/monitor';
 import { enqueueAdvance, queueStats } from '../infra/jobQueue';
@@ -70,6 +71,7 @@ import {
   ResolveCardSchema,
   RetryCardSchema,
   UpdateMeSchema,
+  PreviewJqlSchema,
   UpdateSettingsSchema,
   formatZodError,
 } from './schemas';
@@ -797,6 +799,32 @@ export async function routes(app: FastifyInstance) {
       return reply.code(204).send();
     });
 
+    /**
+     * Confere uma JQL ANTES de salvar: devolve quantos chamados ela traz, uma
+     * amostra e as situações que ela esconde (já com nome, não id).
+     *
+     * Nasceu de um caso real: uma JQL inválida salva pela tela ficava calada, o
+     * board respondia 502 e o dev via "sem chamados" sem ligação nenhuma com a
+     * causa. Consulta recusada volta 200 com `error` preenchido — quem chama é a
+     * tela de configuração, e ela precisa MOSTRAR o erro, não tratar como falha
+     * de rede.
+     */
+    secured.post('/jira/jql/preview', async (req, reply) => {
+      const body = parseBody(PreviewJqlSchema, req, reply);
+      if (!body) return;
+
+      try {
+        return await previewJql(currentUserId(req), body.jql);
+      } catch (err) {
+        if (err instanceof JiraAuthError) {
+          return reply.code(428).send({ code: 'JIRA_AUTH_BLOCKED', error: err.message });
+        }
+        return reply
+          .code(502)
+          .send({ error: err instanceof Error ? err.message : 'falha ao falar com o Jira' });
+      }
+    });
+
     secured.get('/jira/:key', async (req, reply) => {
       try {
         return await fetchJiraIssue(currentUserId(req), (req.params as { key: string }).key);
@@ -823,6 +851,9 @@ export async function routes(app: FastifyInstance) {
         traceServiceUrl: s.traceServiceUrl,
         jiraBaseUrl: s.jiraBaseUrl,
         jiraAssignedJql: s.jiraAssignedJql,
+        // O padrão viaja junto: é o que dá à tela um "restaurar padrão" sem
+        // repetir a string no front, onde ela sairia de sincronia no primeiro ajuste.
+        jiraAssignedJqlDefault: DEFAULT_ASSIGNED_JQL,
         pbInsightUrl: s.pbInsightUrl,
         skills: s.skills,
         updatedAt: s.updatedAt,
@@ -846,6 +877,7 @@ export async function routes(app: FastifyInstance) {
         traceServiceUrl: updated.traceServiceUrl,
         jiraBaseUrl: updated.jiraBaseUrl,
         jiraAssignedJql: updated.jiraAssignedJql,
+        jiraAssignedJqlDefault: DEFAULT_ASSIGNED_JQL,
         pbInsightUrl: updated.pbInsightUrl,
         skills: updated.skills,
         updatedAt: updated.updatedAt,

@@ -3,6 +3,8 @@ import type { PBObject } from "../../../domain/entities/pb-object.js";
 import type { DiagnosisOutput, DiagnosticImage, ILLMClient } from "../../ports/llm-client.port.js";
 import type { IObjectRepository } from "../../ports/object-repository.port.js";
 import type { ISourceFileProvider } from "../../ports/source-file-provider.port.js";
+import type { PatternSibling } from "../find-pattern-siblings/find-pattern-siblings.use-case.js";
+import { FindPatternSiblingsUseCase } from "../find-pattern-siblings/find-pattern-siblings.use-case.js";
 import type { ObjectContext } from "../query-object-context/query-object-context.use-case.js";
 import { QueryObjectContextUseCase } from "../query-object-context/query-object-context.use-case.js";
 
@@ -30,11 +32,30 @@ export interface EventFocus {
   name: string;
 }
 
+/**
+ * Teto do bloco de abrangência. 40 ocorrências × 2 KB ≈ 80 KB (~20k tokens),
+ * ordem de grandeza aceitável ao lado do root+ancestrais. O corte do corpo é
+ * pelo FIM de propósito: a guarda que distingue "já corrigido" de "com o
+ * defeito" é sempre cláusula de entrada, fica nos primeiros caracteres.
+ */
+export const DEFAULT_MAX_SIBLINGS = 40;
+export const DEFAULT_SIBLING_BODY_CHARS = 2000;
+
+export interface PrepareOptions {
+  /** 0 desliga o bloco de abrangência. Default: DEFAULT_MAX_SIBLINGS. */
+  maxSiblings?: number;
+  siblingBodyChars?: number;
+}
+
 export interface DiagnosisPreparation {
   context: ObjectContext;
   dumpedObjects: PBObject[];
   /** true quando o dump usou um evento isolado do root, não o objeto inteiro. */
   focusedOnEvent: boolean;
+  /** Outras ocorrências do mesmo evento/tipo de controle — vazio sem eventFocus. */
+  siblings: PatternSibling[];
+  /** true quando `siblings` foi cortado pelo teto (o dump não é exaustivo). */
+  siblingsTruncated: boolean;
   objectContext: string;
 }
 
@@ -55,6 +76,7 @@ export class DiagnoseTicketUseCase {
     hops = 1,
     relationTypes: DependencyType[] = DEFAULT_DUMP_RELATION_TYPES,
     eventFocus?: EventFocus,
+    options: PrepareOptions = {},
   ): Promise<DiagnosisPreparation | null> {
     const context = await new QueryObjectContextUseCase(this.objectRepo).execute(objectName, hops);
     if (!context) return null;
@@ -66,6 +88,8 @@ export class DiagnoseTicketUseCase {
     ];
 
     const parts: string[] = [];
+    let siblings: PatternSibling[] = [];
+    let siblingsTruncated = false;
 
     if (eventFocus) {
       const owner = eventFocus.owner.toLowerCase();
@@ -77,6 +101,19 @@ export class DiagnoseTicketUseCase {
       parts.push(
         `--- EVENTO: ${match.owner}.${match.name} [${match.kind}] (${context.root.filePath}, linhas ${match.startLine}-${match.endLine}) ---\n${match.body}`,
       );
+
+      const maxSiblings = options.maxSiblings ?? DEFAULT_MAX_SIBLINGS;
+      if (maxSiblings > 0) {
+        const found = await new FindPatternSiblingsUseCase(this.objectRepo).execute(
+          context.root,
+          match.owner,
+          match.name,
+        );
+        if (found) {
+          siblingsTruncated = found.siblings.length > maxSiblings;
+          siblings = found.siblings.slice(0, maxSiblings);
+        }
+      }
     } else {
       const rootSource = await this.sourceFiles.readOne(context.root.filePath);
       parts.push(
@@ -89,12 +126,45 @@ export class DiagnoseTicketUseCase {
       parts.push(`--- OBJETO: ${obj.name} [${obj.type}] (${obj.filePath}) ---\n${source}`);
     }
 
+    if (siblings.length > 0) {
+      parts.push(
+        this.renderSiblings(siblings, siblingsTruncated, options.siblingBodyChars ?? DEFAULT_SIBLING_BODY_CHARS),
+      );
+    }
+
     return {
       context,
       dumpedObjects: [context.root, ...supportingObjects],
       focusedOnEvent: Boolean(eventFocus),
+      siblings,
+      siblingsTruncated,
       objectContext: parts.join("\n\n"),
     };
+  }
+
+  /**
+   * Bloco de abrangência: o mesmo evento, no mesmo tipo de controle, nos
+   * outros objetos do ws_objects. Vem depois do root e dos ancestrais de
+   * propósito — é material de comparação, não a evidência primária.
+   */
+  private renderSiblings(siblings: PatternSibling[], truncated: boolean, bodyChars: number): string {
+    const header =
+      `--- OUTRAS OCORRÊNCIAS DO MESMO EVENTO (${siblings.length}${truncated ? "+, lista cortada no teto" : ""}) ---\n` +
+      "Mesmo evento, no mesmo tipo de controle, em outros objetos. Não têm aresta com o objeto raiz — " +
+      "compartilham só o ancestral do controle. Use para responder à seção Abrangência: quais destas " +
+      "têm o MESMO defeito e quais já estão corretas. Corpos podem estar cortados no fim.";
+
+    const blocks = siblings.map((s) => {
+      const body = s.event.body.length > bodyChars
+        ? `${s.event.body.slice(0, bodyChars)}\n[... corpo cortado — ${s.event.body.length} chars no total]`
+        : s.event.body;
+      return (
+        `--- ${s.object.id} :: ${s.control.name}.${s.event.name} ` +
+        `(${s.object.filePath}, linhas ${s.event.startLine}-${s.event.endLine}) ---\n${body}`
+      );
+    });
+
+    return [header, ...blocks].join("\n\n");
   }
 
   async diagnose(
@@ -108,6 +178,7 @@ export class DiagnoseTicketUseCase {
       objectContext: preparation.objectContext,
       images,
       techLeadComment,
+      siblingCount: preparation.siblings.length,
     });
   }
 }

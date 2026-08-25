@@ -90,8 +90,9 @@ export function JiraTroubleshooting() {
         </h5>
         <p>
           Aí não é autenticação. Veja o <strong>Monitor de Recursos</strong> (status do Jira) e a
-          consulta JQL em Configurações → Jira: por padrão ela traz o que está atribuído a você e
-          ainda não resolvido. Chamado que já virou card, ou que você dispensou, não reaparece.
+          consulta JQL em Configurações → Jira: por padrão ela traz só o que está atribuído a você
+          nas colunas até Desenvolvimento — Revisão, Gerar Exe, Testes, Resolvidos, Homologação e
+          Entregue ficam de fora. Chamado que já virou card, ou que você dispensou, não reaparece.
         </p>
       </section>
     </div>

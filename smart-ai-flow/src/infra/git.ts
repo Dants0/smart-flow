@@ -190,6 +190,8 @@ export async function commitFiles(input: CommitInput): Promise<{ hash: string }>
 export async function pushBranch(
   module: string,
   branch: string,
+  // `user` (username do Bitbucket), não `email`: a Atlassian pede o username
+  // nos comandos Git e o e-mail nas APIs. Ver authHeader em bitbucket.ts.
   creds: { user: string; appPassword: string },
 ): Promise<void> {
   const repo = repoForModule(module);

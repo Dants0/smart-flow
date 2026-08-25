@@ -190,3 +190,120 @@ describe("DiagnoseTicketUseCase.diagnose", () => {
     expect(llm.lastContext?.techLeadComment).toBe("suspeito do evento ue_zoom");
   });
 });
+
+/**
+ * Duas janelas que sobrescrevem o mesmo evento no mesmo tipo de controle e
+ * não têm aresta entre si — a topologia que o dump ancorado num objeto não
+ * alcançava (SMART-50927).
+ */
+const SIBLING_FILES: SourceFile[] = [
+  {
+    relativePath: "gen/gen.pbl.src/u_dw_pac.sru",
+    content: `$PBExportHeader$u_dw_pac.sru\nglobal type u_dw_pac from datawindow\nend type`,
+  },
+  {
+    relativePath: "mw/mw.pbl.src/w_raiz.srw",
+    content: [
+      "$PBExportHeader$w_raiz.srw",
+      "global type w_raiz from window",
+      "end type",
+      "type dw_pac01tab from u_dw_pac within w_raiz",
+      "end type",
+      "event avancar;call super::avancar;CORPO_DO_RAIZ",
+      "end event",
+    ].join("\n"),
+  },
+  {
+    relativePath: "mw/mw.pbl.src/w_irma.srw",
+    content: [
+      "$PBExportHeader$w_irma.srw",
+      "global type w_irma from window",
+      "end type",
+      "type dw_pac01tab from u_dw_pac within w_irma",
+      "end type",
+      "event avancar;call super::avancar;CORPO_DA_IRMA",
+      "end event",
+    ].join("\n"),
+  },
+];
+
+async function ingestSiblingCodebase() {
+  const repo = new JsonObjectRepository();
+  await new IngestCodebaseVersionUseCase(
+    new FakeProvider(SIBLING_FILES),
+    new ParserRegistry(),
+    new HeuristicDependencyExtractor(),
+    repo,
+  ).execute("teste");
+  return repo;
+}
+
+describe("DiagnoseTicketUseCase.prepare — bloco de abrangência", () => {
+  it("anexa o mesmo evento das janelas irmãs ao contexto", async () => {
+    const repo = await ingestSiblingCodebase();
+    const useCase = new DiagnoseTicketUseCase(repo, new FakeProvider(SIBLING_FILES), new FakeLLMClient());
+
+    const prep = await useCase.prepare("w_raiz", 1, [], { owner: "dw_pac01tab", name: "avancar" });
+
+    expect(prep!.siblings.map((s) => s.object.name)).toEqual(["w_irma"]);
+    expect(prep!.objectContext).toContain("OUTRAS OCORRÊNCIAS DO MESMO EVENTO");
+    expect(prep!.objectContext).toContain("CORPO_DA_IRMA");
+  });
+
+  it("não busca irmãs quando o dump não está focado num evento", async () => {
+    const repo = await ingestSiblingCodebase();
+    const useCase = new DiagnoseTicketUseCase(repo, new FakeProvider(SIBLING_FILES), new FakeLLMClient());
+
+    const prep = await useCase.prepare("w_raiz", 1, []);
+
+    expect(prep!.siblings).toEqual([]);
+    expect(prep!.objectContext).not.toContain("OUTRAS OCORRÊNCIAS");
+  });
+
+  it("maxSiblings 0 desliga o bloco sem afetar o resto do contexto", async () => {
+    const repo = await ingestSiblingCodebase();
+    const useCase = new DiagnoseTicketUseCase(repo, new FakeProvider(SIBLING_FILES), new FakeLLMClient());
+
+    const prep = await useCase.prepare("w_raiz", 1, [], { owner: "dw_pac01tab", name: "avancar" }, {
+      maxSiblings: 0,
+    });
+
+    expect(prep!.siblings).toEqual([]);
+    expect(prep!.objectContext).toContain("CORPO_DO_RAIZ");
+  });
+
+  it("sinaliza quando a lista de irmãs foi cortada pelo teto", async () => {
+    const repo = await ingestSiblingCodebase();
+    const useCase = new DiagnoseTicketUseCase(repo, new FakeProvider(SIBLING_FILES), new FakeLLMClient());
+
+    const prep = await useCase.prepare("w_raiz", 1, [], { owner: "dw_pac01tab", name: "avancar" }, {
+      maxSiblings: 0.5,
+    });
+
+    expect(prep!.siblingsTruncated).toBe(true);
+  });
+
+  it("corta o corpo da irmã pelo FIM, preservando a cláusula de entrada", async () => {
+    const repo = await ingestSiblingCodebase();
+    const useCase = new DiagnoseTicketUseCase(repo, new FakeProvider(SIBLING_FILES), new FakeLLMClient());
+
+    const prep = await useCase.prepare("w_raiz", 1, [], { owner: "dw_pac01tab", name: "avancar" }, {
+      siblingBodyChars: 6,
+    });
+
+    expect(prep!.objectContext).toContain("CORPO_");
+    expect(prep!.objectContext).toContain("corpo cortado");
+    expect(prep!.objectContext).not.toContain("CORPO_DA_IRMA");
+  });
+
+  it("informa a contagem de irmãs ao LLM, para ligar a seção Abrangência", async () => {
+    const repo = await ingestSiblingCodebase();
+    const llm = new FakeLLMClient();
+    const useCase = new DiagnoseTicketUseCase(repo, new FakeProvider(SIBLING_FILES), llm);
+
+    const prep = await useCase.prepare("w_raiz", 1, [], { owner: "dw_pac01tab", name: "avancar" });
+    await useCase.diagnose(prep!, "chamado");
+
+    expect(llm.lastContext?.siblingCount).toBe(1);
+  });
+});

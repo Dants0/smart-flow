@@ -25,7 +25,11 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${API_URL}${path}`, {
     ...init,
     headers: {
-      "content-type": "application/json",
+      // Só declara JSON quando existe corpo. Anunciar `application/json` numa
+      // chamada sem corpo faz o Fastify responder 400 (FST_ERR_CTP_EMPTY_JSON_BODY),
+      // que era o que quebrava "Testar conexão", dispensar chamado e apagar
+      // usuário — todas rotas sem corpo.
+      ...(init?.body === undefined ? {} : { "content-type": "application/json" }),
       ...(token && !isPublic ? { Authorization: `Bearer ${token}` } : {}),
       ...init?.headers,
     },
@@ -94,6 +98,7 @@ export function updateMe(patch: {
   gitName?: string;
   gitEmail?: string;
   bitbucketUser?: string;
+  bitbucketEmail?: string;
   bitbucketAppPassword?: string;
   jiraUser?: string;
   jiraPassword?: string;
@@ -255,6 +260,8 @@ export interface PlatformSettingsView {
   traceServiceUrl: string;
   jiraBaseUrl: string | null;
   jiraAssignedJql: string;
+  /** Consulta que o produto entrega de fábrica — habilita o "restaurar padrão". */
+  jiraAssignedJqlDefault: string;
   pbInsightUrl: string;
   /** Skill do time colada em Configurações > IA. null = nenhuma configurada. */
   skills: string | null;
@@ -385,4 +392,21 @@ export function getCardChat(id: string): Promise<ChatMessage[]> {
 /** Pergunta pontual: o contexto (chamado, análise, proposta, código) é montado no backend. */
 export function sendCardQuestion(id: string, content: string): Promise<ChatMessage[]> {
   return request(`/cards/${id}/chat`, { method: "POST", body: JSON.stringify({ content }) });
+}
+
+export interface JqlStatus {
+  id: string;
+  name: string;
+}
+
+/** Conferência de uma JQL antes de salvar. `error` = o Jira recusou a consulta. */
+export interface JqlPreview {
+  total: number;
+  keys: string[];
+  hidden: JqlStatus[];
+  error?: string;
+}
+
+export function previewJiraJql(jql: string): Promise<JqlPreview> {
+  return request("/jira/jql/preview", { method: "POST", body: JSON.stringify({ jql }) });
 }

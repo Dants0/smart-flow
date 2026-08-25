@@ -3,6 +3,7 @@ import { loadModuleContext } from '../infra/moduleContext';
 import { gatherSourceMaterial } from '../infra/sourceExcerpts';
 import { getSettings } from '../infra/settingsRepository';
 import { buildSkillSection } from '../domain/skill';
+import { buildTraceSection } from '../domain/traceSection';
 import type { Card } from '../domain/card';
 
 /**
@@ -43,12 +44,10 @@ function buildContext(card: Card, moduleContext: string, code: string): string {
     ...(card.devHints?.trim()
       ? ['# Direcionamento do dev (escrito por quem abriu o card)', card.devHints.trim(), '']
       : []),
+    // `trimStart` porque o bloco abre com um separador próprio (o analyzer e o
+    // proposer o emendam num prompt corrido); aqui a separação já é explícita.
     ...(card.traceAnalysis?.length
-      ? [
-          '# Diagnóstico de trace',
-          ...card.traceAnalysis.map((t) => `## ${t.filename}\n${t.strategicAnalysis}`),
-          '',
-        ]
+      ? [buildTraceSection(card.traceAnalysis, 'chat').trimStart(), '']
       : []),
     ...(card.analysis
       ? [

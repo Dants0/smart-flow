@@ -44,7 +44,7 @@ src/interfaces/http/
   routes/
     health.route.ts
     search.route.ts
-    objects.route.ts      /objects/:name, /objects/:name/context, /objects/:name/events/:eventName
+    objects.route.ts      /objects/:name, /objects/:name/context, /objects/:name/events/:eventName, /objects/:name/events/:eventName/siblings
     snapshots.route.ts     /snapshots, /diff
     diagnose.route.ts      /diagnose (POST)
 ```
@@ -64,6 +64,7 @@ localhost.
 | GET | `/objects/:name` | Objeto completo (controles, dataobjects, eventos, colunas) |
 | GET | `/objects/:name/context?hops=` | Ancestrais + relacionados (N saltos) + dependentes reversos |
 | GET | `/objects/:name/events/:eventName?owner=` | Corpo de um evento/função específico |
+| GET | `/objects/:name/events/:eventName/siblings?owner=&limit=` | Outras ocorrências do mesmo evento no mesmo tipo de controle (abrangência, docs/16) |
 | GET | `/snapshots` | Lista snapshots históricos disponíveis |
 | GET | `/diff?from=&to=&only=&contains=` | Diferenças entre dois snapshots (ou snapshot × grafo atual) |
 | POST | `/diagnose` | Motor de diagnóstico — **chama a API da Anthropic, custo real**, salvo `dryRun: true` |

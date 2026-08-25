@@ -9,6 +9,7 @@ import type {
   TraceFileAnalysis,
 } from '../domain/card';
 import type { Stage } from '../domain/stages';
+import { stripNulls } from '../domain/attachmentText';
 import type { AnalyzerOutput, ProposerOutput } from '../agents/contracts';
 
 /**
@@ -185,12 +186,40 @@ export async function findAllJiraKeys(): Promise<string[]> {
 }
 
 /**
+ * Nenhum texto do card chega ao Postgres com NUL. O anexo já é decodificado
+ * certo na origem (`decodeAttachmentText`), mas a gravação é o ponto por onde
+ * TODA origem passa — resposta de modelo, diagnóstico do app_trace, colagem do
+ * dev, anexo com codificação que ninguém previu. Um único NUL derruba a
+ * transação inteira com o erro `22P05` do Postgres, que chega ao dev como
+ * "Internal Server Error" ao criar o card — foi assim no SMART-51229, cujo
+ * trace vinha em UTF-16.
+ */
+function semNul<T extends string | null | undefined>(texto: T): T {
+  return (typeof texto === 'string' ? stripNulls(texto) : texto) as T;
+}
+
+/**
+ * Mesma proteção para o que vai em coluna `jsonb`, que recusa NUL igual.
+ *
+ * Limpa cada string ANTES de serializar, via replacer: no JSON já serializado o
+ * NUL não é mais um caractere, virou a sequência escapada de seis letras — e
+ * procurar pelo caractere ali nunca acharia nada.
+ */
+function semNulJson<T>(valor: T): T {
+  if (valor === null || valor === undefined) return valor;
+  return JSON.parse(
+    JSON.stringify(valor, (_chave, v) => (typeof v === 'string' ? stripNulls(v) : v)),
+  ) as T;
+}
+
+/**
  * Upsert do card + substitui o histórico inteiro. O histórico é pequeno
  * (algumas entradas por card), então apagar-e-recriar é mais simples e tão
  * correto quanto tentar diffar incrementalmente.
  */
 export async function saveCard(card: Card): Promise<void> {
   const stage = card.stage as unknown as PrismaCard['stage'];
+  const traceFiles = card.traceFiles?.map((t) => ({ ...t, content: stripNulls(t.content) }));
 
   await prisma.$transaction([
     prisma.card.upsert({
@@ -199,17 +228,17 @@ export async function saveCard(card: Card): Promise<void> {
         id: card.id,
         jiraKey: card.jiraKey,
         module: card.module,
-        rawTicket: card.rawTicket,
-        devHints: card.devHints ?? null,
+        rawTicket: semNul(card.rawTicket),
+        devHints: semNul(card.devHints) ?? null,
         images: (card.images as unknown as object) ?? undefined,
-        traceFiles: (card.traceFiles as unknown as object) ?? undefined,
+        traceFiles: (traceFiles as unknown as object) ?? undefined,
         stage,
-        analysis: (card.analysis as unknown as object) ?? undefined,
-        proposal: (card.proposal as unknown as object) ?? undefined,
-        traceAnalysis: (card.traceAnalysis as unknown as object) ?? undefined,
+        analysis: (semNulJson(card.analysis) as unknown as object) ?? undefined,
+        proposal: (semNulJson(card.proposal) as unknown as object) ?? undefined,
+        traceAnalysis: (semNulJson(card.traceAnalysis) as unknown as object) ?? undefined,
         grounded: card.grounded ?? true,
         unknownPaths: (card.unknownPaths as unknown as object) ?? undefined,
-        resolutionText: card.resolutionText ?? null,
+        resolutionText: semNul(card.resolutionText) ?? null,
         appliedAt: card.appliedAt ? new Date(card.appliedAt) : null,
         appliedFiles: (card.appliedFiles as unknown as object) ?? undefined,
         appliedBackupDir: card.appliedBackupDir ?? null,
@@ -223,13 +252,13 @@ export async function saveCard(card: Card): Promise<void> {
       update: {
         stage,
         images: (card.images as unknown as object) ?? undefined,
-        traceFiles: (card.traceFiles as unknown as object) ?? undefined,
-        analysis: (card.analysis as unknown as object) ?? undefined,
-        proposal: (card.proposal as unknown as object) ?? undefined,
-        traceAnalysis: (card.traceAnalysis as unknown as object) ?? undefined,
+        traceFiles: (traceFiles as unknown as object) ?? undefined,
+        analysis: (semNulJson(card.analysis) as unknown as object) ?? undefined,
+        proposal: (semNulJson(card.proposal) as unknown as object) ?? undefined,
+        traceAnalysis: (semNulJson(card.traceAnalysis) as unknown as object) ?? undefined,
         grounded: card.grounded ?? true,
         unknownPaths: (card.unknownPaths as unknown as object) ?? Prisma.DbNull,
-        resolutionText: card.resolutionText ?? null,
+        resolutionText: semNul(card.resolutionText) ?? null,
         // null explícito (e não undefined) porque reverter PRECISA apagar a marca
         appliedAt: card.appliedAt ? new Date(card.appliedAt) : null,
         appliedFiles: (card.appliedFiles as unknown as object) ?? Prisma.DbNull,

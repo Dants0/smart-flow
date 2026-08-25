@@ -63,3 +63,27 @@ describe("buildDiagnosisPrompt", () => {
     expect(prompt).not.toContain("COMENTÁRIO DO TECH LEAD");
   });
 });
+
+describe("buildDiagnosisPrompt — seção Abrangência", () => {
+  it("não pede abrangência quando não há ocorrências irmãs no contexto", () => {
+    const prompt = buildDiagnosisPrompt({ objectContext: "x", ticketText: "y" });
+    expect(prompt).not.toContain("Abrangência");
+  });
+
+  it("não pede abrangência quando a contagem de irmãs é zero", () => {
+    const prompt = buildDiagnosisPrompt({ objectContext: "x", ticketText: "y", siblingCount: 0 });
+    expect(prompt).not.toContain("Abrangência");
+  });
+
+  it("exige listar quais irmãs têm o mesmo defeito quando elas estão no contexto", () => {
+    const prompt = buildDiagnosisPrompt({ objectContext: "x", ticketText: "y", siblingCount: 5 });
+    expect(prompt).toContain("Abrangência");
+    expect(prompt).toContain("5 outra(s) ocorrência(s)");
+    expect(prompt).toContain("MESMO defeito");
+  });
+
+  it("proíbe extrapolar para objetos ausentes do contexto", () => {
+    const prompt = buildDiagnosisPrompt({ objectContext: "x", ticketText: "y", siblingCount: 3 });
+    expect(prompt.toLowerCase()).toContain("não deduza nem invente arquivos");
+  });
+});

@@ -8,6 +8,7 @@ import {
   repairJsonStrings,
 } from '../src/agents/contracts';
 import {
+  MAX_BLOCK_LINES,
   blockEnd,
   declaredAncestors,
   extractIdentifiers,
@@ -163,8 +164,11 @@ describe('blockEnd — bloco inteiro, não janela fixa', () => {
   });
 
   it('bloco sem terminador é cortado E marcado como cortado', () => {
-    // 500 linhas sem "end event": o teto age, mas quem lê precisa saber
-    const enorme = ['event avancar;call super::avancar;', ...Array(500).fill('  // corpo')];
+    // bloco sem "end event" passando do teto: ele age, mas quem lê precisa saber
+    const enorme = [
+      'event avancar;call super::avancar;',
+      ...Array(MAX_BLOCK_LINES + 100).fill('  // corpo'),
+    ];
     const resultado = blockEnd(enorme, 0);
 
     expect(resultado.truncated).toBe(true);

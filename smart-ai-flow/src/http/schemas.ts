@@ -79,6 +79,7 @@ export const UpdateMeSchema = z.object({
   gitName: z.string().optional(),
   gitEmail: z.string().email('e-mail inválido').or(z.literal('')).optional(),
   bitbucketUser: z.string().optional(),
+  bitbucketEmail: z.string().email('e-mail inválido').or(z.literal('')).optional(),
   bitbucketAppPassword: z.string().optional(),
 });
 
@@ -124,3 +125,11 @@ export const JiraCommentSchema = z.object({
 export function formatZodError(err: z.ZodError): string {
   return err.issues.map((i) => `${i.path.join('.') || 'corpo'}: ${i.message}`).join('; ');
 }
+
+/**
+ * Conferência de JQL. Limite generoso porque a consulta do time já passa de 130
+ * caracteres com a lista de situações, e o campo é texto livre por natureza.
+ */
+export const PreviewJqlSchema = z.object({
+  jql: z.string().min(1).max(2000),
+});

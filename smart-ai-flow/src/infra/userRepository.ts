@@ -1,3 +1,4 @@
+import { bitbucketApiIdentity } from '../domain/bitbucketIdentity';
 import { prisma } from './db';
 import { decryptSecret, encryptSecret, hashPassword, verifyPassword } from './crypto';
 
@@ -19,6 +20,7 @@ export interface AuthUser {
   gitName: string | null;
   gitEmail: string | null;
   bitbucketUser: string | null;
+  bitbucketEmail: string | null;
   bitbucketAppPasswordSet: boolean;
 }
 
@@ -43,6 +45,7 @@ function toAuthUser(row: {
   gitName?: string | null;
   gitEmail?: string | null;
   bitbucketUser?: string | null;
+  bitbucketEmail?: string | null;
   bitbucketAppPasswordEnc?: string | null;
 }): AuthUser {
   // Sem credencial do Jira o banner de chamados atribuídos simplesmente nunca
@@ -70,6 +73,7 @@ function toAuthUser(row: {
     gitName: row.gitName ?? null,
     gitEmail: row.gitEmail ?? null,
     bitbucketUser: row.bitbucketUser ?? null,
+    bitbucketEmail: row.bitbucketEmail ?? null,
     bitbucketAppPasswordSet: !!row.bitbucketAppPasswordEnc,
   };
 }
@@ -128,6 +132,7 @@ export async function updateUser(
     gitName?: string;
     gitEmail?: string;
     bitbucketUser?: string;
+    bitbucketEmail?: string;
     bitbucketAppPassword?: string;
   },
 ): Promise<AuthUser> {
@@ -151,6 +156,7 @@ export async function updateUser(
   if (patch.gitName !== undefined) data.gitName = patch.gitName.trim() || null;
   if (patch.gitEmail !== undefined) data.gitEmail = patch.gitEmail.trim() || null;
   if (patch.bitbucketUser !== undefined) data.bitbucketUser = patch.bitbucketUser.trim() || null;
+  if (patch.bitbucketEmail !== undefined) data.bitbucketEmail = patch.bitbucketEmail.trim() || null;
   if (patch.bitbucketAppPassword) {
     data.bitbucketAppPasswordEnc = encryptSecret(patch.bitbucketAppPassword.trim());
   }
@@ -206,13 +212,28 @@ export async function getJiraAuthBlock(
   return { at: row.jiraAuthBlockedAt, reason: row.jiraAuthBlockedReason ?? 'autenticação negada pelo Jira' };
 }
 
-/** Credencial do Bitbucket em claro — só pra uso imediato no push/PR. */
+/**
+ * Credencial do Bitbucket em claro — só pra uso imediato no push/PR.
+ *
+ * Devolve DUAS identidades porque a Atlassian pede metades diferentes no Basic
+ * Auth desde que o API token substituiu a app password:
+ *   `user`  -> git push   (nome de usuário do Bitbucket)
+ *   `email` -> API REST   (e-mail da conta Atlassian)
+ *
+ * Sem `bitbucketEmail` preenchido, `email` cai pro username: é exatamente o
+ * comportamento antigo, então quem ainda usa app password (onde o username
+ * servia pros dois) continua funcionando sem tocar em nada.
+ */
 export async function getBitbucketCredentials(
   userId: string,
-): Promise<{ user: string; appPassword: string } | null> {
+): Promise<{ user: string; email: string; appPassword: string } | null> {
   const row = await prisma.user.findUnique({ where: { id: userId } });
   if (!row?.bitbucketUser || !row.bitbucketAppPasswordEnc) return null;
-  return { user: row.bitbucketUser, appPassword: decryptSecret(row.bitbucketAppPasswordEnc) };
+  return {
+    user: row.bitbucketUser,
+    email: bitbucketApiIdentity(row.bitbucketUser, row.bitbucketEmail),
+    appPassword: decryptSecret(row.bitbucketAppPasswordEnc),
+  };
 }
 
 /** Identidade do commit. Cai pro nome de exibição quando o dev não preencheu. */
