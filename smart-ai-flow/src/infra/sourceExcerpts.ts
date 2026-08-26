@@ -48,6 +48,36 @@ export interface SourceMaterial {
 const MAX_CHARS_PER_FILE = 96000;
 const MAX_TOTAL_CHARS = 240000;
 const MAX_FILES = 10;
+
+/**
+ * Orçamento por estágio. Os dois estágios precisam de coisas OPOSTAS:
+ *
+ * - a **proposta** precisa de PROFUNDIDADE: o bloco inteiro do evento que ela
+ *   vai reescrever, senão o diff sai contra código que ninguém leu;
+ * - a **análise** precisa de LARGURA: a cadeia de chamada atravessa objetos
+ *   (evento → função de janela → `OpenWithParm` → `open` da janela genérica →
+ *   função global), e parar no primeiro arquivo é justamente o que faz a
+ *   análise culpar a propriedade do controle em vez do `open` de quem abre.
+ *
+ * Por isso a análise lê MAIS arquivos com MENOS de cada um.
+ */
+export interface GatherBudget {
+  maxFiles: number;
+  maxCharsPerFile: number;
+  maxTotalChars: number;
+}
+
+export const PROPOSER_BUDGET: GatherBudget = {
+  maxFiles: MAX_FILES,
+  maxCharsPerFile: MAX_CHARS_PER_FILE,
+  maxTotalChars: MAX_TOTAL_CHARS,
+};
+
+export const ANALYZER_BUDGET: GatherBudget = {
+  maxFiles: 14,
+  maxCharsPerFile: 32000,
+  maxTotalChars: 140000,
+};
 /**
  * Teto de segurança: bloco maior que isso é cortado, mas COM AVISO.
  * Exportado pro teste acompanhar o valor em vez de fixar um número na mão —
@@ -152,7 +182,11 @@ function mergeRanges(ranges: [number, number][]): [number, number][] {
  * Recorta os trechos que interessam de um arquivo, com definições primeiro.
  * Exportada pra ter teste: é a regra que decidiu errado da primeira vez.
  */
-export function selectExcerpt(content: string, terms: string[]): string {
+export function selectExcerpt(
+  content: string,
+  terms: string[],
+  maxChars: number = MAX_CHARS_PER_FILE,
+): string {
   const lines = content.split('\n');
   const skip = prototypeRanges(lines);
   const inPrototypes = (i: number) => skip.some(([a, b]) => i >= a && i <= b);
@@ -200,7 +234,7 @@ export function selectExcerpt(content: string, terms: string[]): string {
       .slice(0, 60)
       .map((l, i) => `${i + 1}: ${l}`)
       .join('\n')
-      .slice(0, MAX_CHARS_PER_FILE);
+      .slice(0, maxChars);
   }
 
   const parts: string[] = [];
@@ -214,7 +248,7 @@ export function selectExcerpt(content: string, terms: string[]): string {
       .join('\n');
 
     // teto por arquivo é respeitado bloco a bloco, não estourado pelo último
-    if (total + block.length > MAX_CHARS_PER_FILE) {
+    if (total + block.length > maxChars) {
       ignorados++;
       continue;
     }
@@ -402,6 +436,7 @@ export async function gatherSourceMaterial(
   module: string,
   objectNames: string[],
   contextText: string,
+  budget: GatherBudget = PROPOSER_BUDGET,
 ): Promise<SourceMaterial> {
   const repo = repoForModule(module);
   if (!repo.root) return { excerpts: [], notFound: objectNames };
@@ -453,7 +488,7 @@ export async function gatherSourceMaterial(
   }
 
   function add(path: string, content: string): void {
-    let excerpt = selectExcerpt(content, terms);
+    let excerpt = selectExcerpt(content, terms, budget.maxCharsPerFile);
 
     /*
      * Segunda leitura do MESMO arquivo com os termos que ele próprio revelou:
@@ -465,7 +500,7 @@ export async function gatherSourceMaterial(
     );
     if (novos.length > 0) {
       terms.push(...novos.slice(0, 8));
-      excerpt = selectExcerpt(content, terms);
+      excerpt = selectExcerpt(content, terms, budget.maxCharsPerFile);
     }
 
     if (!excerpt.trim()) return;
@@ -475,7 +510,7 @@ export async function gatherSourceMaterial(
 
   for (const paths of resolved.values()) {
     for (const path of paths) {
-      if (excerpts.length >= MAX_FILES || total >= MAX_TOTAL_CHARS) break;
+      if (excerpts.length >= budget.maxFiles || total >= budget.maxTotalChars) break;
       if (excerpts.some((e) => e.path === path)) continue;
 
       const content = await read(path);
@@ -500,7 +535,7 @@ export async function gatherSourceMaterial(
    * comeram 164 mil dos 240 mil caracteres do orçamento, e a busca dirigida nem
    * chegava a rodar.
    */
-  if (excerpts.length < MAX_FILES && total < MAX_TOTAL_CHARS) {
+  if (excerpts.length < budget.maxFiles && total < budget.maxTotalChars) {
     const literais = extractQuotedLiterals(contextText);
     const semDefinicao = termsWithoutDefinition(excerpts, termosDoContexto);
     const padroes = [
@@ -510,7 +545,7 @@ export async function gatherSourceMaterial(
     ];
 
     for (const path of await filesMentioning(repo.root, padroes)) {
-      if (excerpts.length >= MAX_FILES || total >= MAX_TOTAL_CHARS) break;
+      if (excerpts.length >= budget.maxFiles || total >= budget.maxTotalChars) break;
       if (excerpts.some((e) => e.path === path)) continue;
 
       const content = await read(path);
@@ -534,12 +569,12 @@ export async function gatherSourceMaterial(
   const pending = [...ancestors].filter(
     (name) => !objectNames.some((o) => o.toLowerCase() === name.toLowerCase()),
   );
-  if (pending.length > 0 && excerpts.length < MAX_FILES && total < MAX_TOTAL_CHARS) {
+  if (pending.length > 0 && excerpts.length < budget.maxFiles && total < budget.maxTotalChars) {
     const resolvedAncestors = await resolveObjectPaths(module, pending);
 
     for (const paths of resolvedAncestors.values()) {
       for (const path of paths) {
-        if (excerpts.length >= MAX_FILES || total >= MAX_TOTAL_CHARS) break;
+        if (excerpts.length >= budget.maxFiles || total >= budget.maxTotalChars) break;
         if (excerpts.some((e) => e.path === path)) continue;
 
         const content = await read(path);
@@ -549,4 +584,154 @@ export async function gatherSourceMaterial(
   }
 
   return { excerpts, notFound };
+}
+
+// ---- Inventário de reuso ----------------------------------------------
+
+/**
+ * Quem mais toca um objeto — a pergunta do Passo 4 do protocolo.
+ *
+ * Sem isso a correção sai certa e incompleta, ou certa e destrutiva, e nos dois
+ * casos o chamado volta. Dois exemplos reais do SMART-51229:
+ *
+ *  - `w_agd03.wf_exibir_instrucoes` não era o único ponto de entrada: o layout
+ *    legado entra por `m_sheet.mf_buscar_agds`. Corrigir só um deixaria metade
+ *    dos operadores vendo o texto truncado.
+ *  - `w_exibe_inst` é compartilhada com o Lab (`u_dw_smm_lab`). Mudar a janela
+ *    direto mudaria uma tela que ninguém pediu pra mexer — por isso a alteração
+ *    entrou condicionada a um marcador opcional no parâmetro.
+ *
+ * É de propósito uma LISTA DE CAMINHOS, sem código: cabe em poucas centenas de
+ * tokens, e o que o modelo precisa saber aqui é "existe outro consumidor?",
+ * não o corpo dele.
+ */
+export interface ReuseHit {
+  /** Nome do objeto pesquisado. */
+  object: string;
+  /** Arquivos que citam o objeto, sem contar o fonte que o define. */
+  paths: string[];
+  /** true = há mais consumidores além dos listados. */
+  truncated: boolean;
+}
+
+/** Teto por objeto: o suficiente pra dizer "é compartilhado", sem virar lista. */
+const MAX_REUSE_PATHS = 12;
+/** Teto de objetos pesquisados: cada um é um `git grep` no repositório inteiro. */
+const MAX_REUSE_OBJECTS = 6;
+
+/** Nome do objeto a partir do caminho: `.../w_agd03.srw` -> `w_agd03`. */
+function objectOfPath(path: string): string {
+  const file = path.slice(path.lastIndexOf('/') + 1);
+  return file.replace(/\.[^.]+$/, '').toLowerCase();
+}
+
+async function filesReferencing(repoRoot: string, name: string): Promise<string[]> {
+  const args = [
+    'grep',
+    '--no-color',
+    '-l',
+    '-i',
+    '-w', // `w_agd03` não casa dentro de `w_agd03_novo`
+    '-F',
+    '-e',
+    name,
+    'HEAD',
+    '--',
+    '*.srw',
+    '*.sru',
+    '*.sra',
+    '*.srd',
+    '*.srm',
+    '*.srq',
+    '*.srs',
+    '*.srf',
+  ];
+
+  try {
+    const { stdout } = await exec('git', args, {
+      cwd: repoRoot,
+      maxBuffer: 8 * 1024 * 1024,
+      timeout: 60_000,
+    });
+    return stdout
+      .split('\n')
+      .map((l) => l.trim().replace(/^HEAD:/, ''))
+      .filter(Boolean);
+  } catch {
+    // exit 1 = nenhum resultado. Qualquer outra falha também não pode derrubar
+    // a análise: o inventário é informação a mais, nunca fundação.
+    return [];
+  }
+}
+
+/**
+ * Para cada objeto, os outros fontes que o citam. Best-effort: repositório
+ * indisponível devolve lista vazia, e o prompt simplesmente não ganha a seção.
+ */
+export async function reuseInventory(module: string, objectNames: string[]): Promise<ReuseHit[]> {
+  const repo = repoForModule(module);
+  if (!repo.root) return [];
+
+  const nomes = [
+    ...new Set(
+      objectNames
+        .map((raw) =>
+          raw
+            .toLowerCase()
+            .replace(/\.[a-z]{3}$/, '')
+            .replace(/\s*\(.*\)\s*/, '')
+            .trim(),
+        )
+        // nome curto demais grepa o repositório inteiro e não diz nada
+        .filter((n) => /^[a-z][\w]{4,}$/.test(n)),
+    ),
+  ].slice(0, MAX_REUSE_OBJECTS);
+
+  // Em paralelo: cada busca varre o repositório inteiro (~16 mil arquivos no
+  // SMART Desktop), e seis delas em fila somariam dezenas de segundos ao estágio.
+  const resultados = await Promise.all(
+    nomes.map(async (nome) => ({
+      nome,
+      // o próprio fonte do objeto sempre casa; ele não é "outro consumidor"
+      encontrados: (await filesReferencing(repo.root as string, nome)).filter(
+        (p) => objectOfPath(p) !== nome,
+      ),
+    })),
+  );
+
+  return resultados
+    .filter((r) => r.encontrados.length > 0)
+    .map(({ nome, encontrados }) => ({
+      object: nome,
+      paths: encontrados.slice(0, MAX_REUSE_PATHS),
+      truncated: encontrados.length > MAX_REUSE_PATHS,
+    }));
+}
+
+/** Bloco pronto pro prompt. String vazia quando não há nada a dizer. */
+export function formatReuseInventory(hits: ReuseHit[]): string {
+  if (hits.length === 0) return '';
+
+  const linhas = hits.map((h) => {
+    const extra = h.truncated ? ` (+ outros além destes ${h.paths.length})` : '';
+    return `## ${h.object} — ${h.paths.length} outro(s) fonte(s) citam${extra}\n${h.paths
+      .map((p) => `- ${p}`)
+      .join('\n')}`;
+  });
+
+  return [
+    '',
+    '# Inventário de reuso (quem mais toca estes objetos)',
+    'Lista de caminhos, sem código — vinda de `git grep` no repositório, não de',
+    'suposição. Serve pra DUAS perguntas, e as duas mudam a proposta:',
+    '',
+    '1. **Quem me chama?** Mais de um ponto de entrada = todos entram no diff, ou',
+    '   o chamado volta com "só corrigiu na tela nova".',
+    '2. **Quem mais usa o que eu vou alterar?** Objeto citado por vários módulos é',
+    '   compartilhado: a alteração tem que ser CONDICIONAL, com o caminho antigo',
+    '   intacto por padrão, e a regressão dos outros consumidores entra no teste.',
+    '',
+    ...linhas,
+    '',
+  ].join('\n');
 }

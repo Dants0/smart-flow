@@ -3,7 +3,7 @@ import { retrieveContext } from '../infra/pbInsight';
 import { loadModuleContext } from '../infra/moduleContext';
 import { getSettings } from '../infra/settingsRepository';
 import { unknownDiffPaths } from '../infra/objectIndex';
-import { gatherSourceMaterial } from '../infra/sourceExcerpts';
+import { gatherSourceMaterial, reuseInventory, formatReuseInventory } from '../infra/sourceExcerpts';
 import { parseDiffTargets } from '../infra/workspace';
 import { buildSkillSection } from '../domain/skill';
 import { buildTraceSection } from '../domain/traceSection';
@@ -70,10 +70,62 @@ Regras:
   material. Sobre o COMPORTAMENTO do código você pode raciocinar por hipótese,
   desde que a hipótese apareça em "risks". Um diff no arquivo certo com premissa
   declarada é revisável em minutos; um bilhete pedindo material custa um dia.
-- Só altere FONTES EXPORTADOS: .sru, .sra, .srd, .srw. Nunca proponha mudança em
-  .pbl, .pbw ou .pbd — são artefatos de build, não entram em commit, e a
-  plataforma recusa o diff se você tocar num deles.
-- Em risks, liste efeitos colaterais (Oracle vs SQL Server, INI, DataWindow).`;
+- Só altere FONTES EXPORTADOS: .sru, .sra, .srd, .srw, .srm, .srf. Nunca
+  proponha mudança em .pbl, .pbw ou .pbd — são artefatos de build, não entram em
+  commit, e a plataforma recusa o diff se você tocar num deles.
+- Em risks, liste efeitos colaterais (Oracle vs SQL Server, INI, DataWindow).
+
+# Reuso: o que decide entre "corrigido" e "chamado devolvido"
+
+O contexto traz um "Inventário de reuso" — quem mais cita cada objeto, vindo de
+busca no repositório. Ele muda o diff de duas formas, e ignorá-lo é o jeito mais
+comum de entregar uma correção certa e inútil:
+
+- **Vários pontos de entrada** (o fluxo novo e o legado, a janela e o menu):
+  todos entram no diff. Corrigir a tela nova e deixar o layout antigo é meio
+  chamado — metade dos operadores continua vendo o defeito.
+- **Objeto compartilhado** (usado por outros módulos: janelas genéricas de
+  preview, funções globais \`f_*\`, user objects de \`aplgen50\`): a alteração tem
+  que ser **condicional**, com o comportamento antigo intacto por padrão — um
+  parâmetro opcional, um marcador na string, uma flag que só o fluxo do chamado
+  liga. E o testHint tem que incluir a **regressão do outro consumidor**: abrir a
+  tela dele e confirmar que nada mudou.
+
+# Raio de alcance: causa-raiz achada ≠ causa-raiz a corrigir neste ticket
+
+Se a correção "de verdade" exige mexer numa função global ou num objeto que
+dezenas de telas usam, **não faça isso neste diff**. Corrija dentro do fluxo do
+chamado e registre em risks, com número, a pendência que sobrou: "causa comum em
+f_x, usada por N objetos — chamado separado". Um diff cirúrgico e uma pendência
+quantificada é entrega; um diff que reescreve infraestrutura dentro de um chamado
+de tela é regressão esperando acontecer.
+
+# Regressão visual é retorno de chamado
+
+Quando a correção mexe em algo que o usuário vê, o padrão é **manter a aparência
+que ele já conhece**, mesmo que a antiga seja pior: mudança visual não pedida faz
+o operador reabrir o chamado. Copie os valores do objeto que exibia antes
+(tamanho, posição, cor, borda, foco) do fonte que veio no material, em vez de
+redesenhar. Cor se lê da propriedade do objeto, não se estima. Se a dúvida for
+"manter ou modernizar", isso é decisão do dev: proponha mantendo e diga em risks
+que dá pra modernizar se ele preferir.
+
+# PowerBuilder: erros que fazem a proposta não compilar
+
+- **Shared variable é escopo de classe, não propriedade do tipo**: \`w_x.s_sTitulo\`
+  lido de fora do objeto dá \`C0019: Incompatible property\`.
+- **Variável de instância pública e função pública não servem com \`OpenWithParm\`
+  em janela \`response!\`**: não existe instância antes do \`Open\`.
+- **Passar dois valores num \`OpenWithParm\`** só funciona com marcador dentro da
+  string, com \`Message.PowerObjectParm\` + estrutura global, ou com variável
+  global. Escolha o marcador (compila já, sem objeto novo) e registre em risks
+  que a alternativa limpa exige criar estrutura no painter — a escolha é do dev.
+- **Nunca escreva caractere acentuado direto no fonte**: a exportação alterna
+  Latin-1 e UTF-8 e o arquivo corrompe. Use o padrão que já existe no trecho.
+- \`char(32766)\` na coluna do .srd não é o limite real, e \`detail(height.autosize)\`
+  não é autosize do controle — não conclua nada a partir dessas duas.
+- \`BorderStyle\`, \`BackColor\` e geometria são ajustáveis em runtime, e o codebase
+  já faz isso: prefira condicionar por fluxo a pedir mudança no painter.`;
 
 export async function runProposal(card: Card): Promise<ProposalResult> {
   if (!card.analysis) {
@@ -107,6 +159,19 @@ export async function runProposal(card: Card): Promise<ProposalResult> {
       : '(nenhum código encontrado para os objetos citados — não invente caminho ' +
         'nem conteúdo: devolva diff vazio e diga o que precisa ser buscado)';
 
+  /*
+   * Quem mais toca os objetos que o diff vai alterar. Sem isto, a proposta
+   * corrige o fluxo citado no chamado e deixa o legado intacto (SMART-51229:
+   * `w_agd03` corrigido, `m_sheet.mf_buscar_agds` esquecido), ou altera uma
+   * janela compartilhada e muda uma tela que ninguém pediu pra mexer.
+   */
+  const reuse = formatReuseInventory(
+    await reuseInventory(card.module, [
+      ...card.analysis.affectedObjects.map((o) => o.name),
+      ...material.excerpts.map((e) => e.path.slice(e.path.lastIndexOf('/') + 1)),
+    ]),
+  );
+
   const userPrompt = [
     `# Chamado ${card.jiraKey}`,
     card.rawTicket,
@@ -120,6 +185,7 @@ export async function runProposal(card: Card): Promise<ProposalResult> {
     '',
     '# Código real dos objetos afetados (lido do repositório, com nº de linha)',
     codeSection,
+    reuse,
     '',
     '# Contexto do módulo',
     moduleContext,

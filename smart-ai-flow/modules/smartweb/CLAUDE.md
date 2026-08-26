@@ -58,6 +58,19 @@ objeto inconsistente no PR.
 <!-- O ouro do arquivo. Cada uma economiza uma rodada de análise errada. -->
 - Diferença de comportamento Oracle vs SQL Server em (preencher).
 - Conversão de trace UTF-16LE ao ler pbtrace (ver pbtrace-tool).
+- **"Texto cortado" nunca é uma hipótese, são três camadas** — gravação (`MID`,
+  coluna curta, variável de tamanho fixo), leitura (o SELECT lê a coluna
+  truncada em vez da íntegra) e exibição (controle, autosize, troca de fonte
+  depois do cálculo de altura). Contar `LEN()` nos três pontos é o que separa
+  diagnóstico de palpite; propriedade de controle é a **última** coisa a
+  investigar, porque é a mais fácil de teorizar sem evidência.
+- **Objeto compartilhado exige alteração condicional** — com o comportamento
+  antigo intacto por padrão e a regressão do outro consumidor no teste.
+- Armadilhas de compilação que valem aqui como no Desktop: shared variable é
+  escopo de classe (`w_x.s_var` de fora dá `C0019`); variável de instância e
+  função pública não servem com `OpenWithParm` em janela `response!` (não existe
+  instância antes do `Open`); nunca escrever caractere acentuado direto no fonte
+  exportado (a exportação alterna Latin-1 e UTF-8 e corrompe o arquivo).
 - (preencher)
 
 ## Como validar uma correção

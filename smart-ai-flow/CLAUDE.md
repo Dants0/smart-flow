@@ -38,8 +38,18 @@ Duas paradas antecipadas, ambas deliberadas:
   acontecem por clique explícito, em VERSIONAMENTO, com a credencial do dev.
 - **A chave de IA vive só no backend** (`infra/llm.ts`, vinda de Configurações →
   IA). Todo consumo vira linha em `Run`.
-- Contexto da IA = `CLAUDE.md` do sistema + caminhos reais do repositório + RAG
-  do PB Insight + skill do time (Configurações → IA) + o chamado.
+- Contexto da IA = `CLAUDE.md` do sistema + **código real do repositório, nos
+  dois estágios** + inventário de reuso (`git grep`) + RAG do PB Insight + skill
+  do time (Configurações → IA) + o chamado.
+
+**A análise lê o repositório, não só o RAG.** Até a sprint de 2026-08-25 o
+analyzer via apenas os trechos do PB Insight, e isso era uma venda: busca
+semântica traz o parecido e erra o idêntico. Quem monta a cadeia de chamada é a
+ANÁLISE — sem fonte na frente ela só consegue teorizar sobre propriedade de
+controle. Os dois estágios têm orçamentos opostos, de propósito
+(`sourceExcerpts.ts`): a análise lê **mais arquivos com menos de cada um**
+(largura, pra cadeia atravessar objetos), a proposta lê **menos arquivos
+inteiros** (profundidade, pro diff bater no bloco certo).
 
 ## Estrutura
 
@@ -90,6 +100,30 @@ escolhe o repositório:
 - Branch: `bug/SMART-XXXXX` (existe também `feature/SMART-XXXXX`). A plataforma
   **verifica e recusa**; não troca de branch, porque a árvore tem trabalho do dev.
 - Mensagem: `:bug:fix SMART-XXXXX <descrição direta>`.
+
+## Onde mora cada regra (e por que não é tudo no mesmo lugar)
+
+Instrução longa e uniforme dilui as regras duras — o modelo lê tudo com o mesmo
+peso. A separação, que vale pra toda regra nova:
+
+| Tipo de regra | Onde vive | Quem paga |
+|---|---|---|
+| **Método** — como investigar, em que ordem, o que nunca perguntar | system prompt do agente (`agents/analyzer.ts`, `agents/proposer.ts`) | todo card, uma vez |
+| **Fato de plataforma** — armadilha do PowerBuilder, objeto compartilhado, regra de commit | `modules/<sistema>/CLAUDE.md` | todo card daquele sistema |
+| **Fato de módulo** — objeto, tabela, caso resolvido | `modules/<módulo>/CLAUDE.md` | todo card do SMART Desktop (vão os seis juntos) |
+| **Método do time** — o passo a passo daquele dev | skill, em Configurações → IA (`domain/skill.ts`) | todo card |
+
+Duas consequências práticas: regra que vale pros dois sistemas vai no system
+prompt (senão é escrita duas vezes e cobrada duas vezes), e conteúdo de módulo é
+caro — `loadModuleContext('smartdesktop')` concatena **seis** briefings em cada
+prompt.
+
+A regra mais dura de todas, e a que mais custou até existir: **a IA não pergunta
+ao dev nada que esteja em arquivo versionado.** "Me cola a seção X do `.srd`",
+"qual janela abre esse pop-up", "quem chama essa função" — tudo isso é busca que
+a esteira faz sozinha (`objectIndex.ts`, `sourceExcerpts.ts`). Pergunta sobre
+código é proibida; sobre intenção, ambiente ou estado do `.pbl`, é permitida e
+bem-vinda.
 
 ## Convenções deste backend
 

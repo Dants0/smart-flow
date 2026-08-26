@@ -53,6 +53,70 @@ correção altera e os únicos que entram num commit.
 modificados no working copy só por efeito de compilar, e **nunca** sobem. Diff
 que os toque é recusado pela plataforma.
 
+E há uma distinção que muda o significado da palavra "aplicado": **o repositório
+não é o que roda.** O `.pbl` é a verdade na máquina do dev e em produção; o
+`ws_objects/*.src` é espelho de exportação. Uma correção pode estar no repo e
+não no `.pbl` — e nesse estado ela não foi testada por ninguém. Ao fechar,
+declare o estado **por artefato** (no repo / no `.pbl` / testado); "aplicado",
+sozinho, é uma afirmação que o dev não consegue conferir.
+
+## Fonte não é só janela: `.srf` e `.srm` contam igual
+
+O reflexo é procurar em `.srw` (janela) e `.srd` (datawindow), e foi o que fez o
+SMART-51229 girar em falso por cinco rodadas: as duas peças que faltavam eram
+uma **função global** (`.srf`) e um **menu** (`.srm`).
+
+- **`.srf` — funções globais.** É onde mora comportamento que nenhuma busca
+  semântica associa ao sintoma. "Instruções cortadas na agenda" nunca traria
+  `font_color.srf`, e era ali que a causa estava.
+- **`.srm` — menus.** Menu é **ponto de entrada**, igual a botão de janela. Um
+  fluxo corrigido só na janela continua defeituoso quando o operador entra pelo
+  menu (no 51229, `m_sheet.mf_buscar_agds`, o caminho do layout legado).
+
+## Objetos compartilhados: o mapa que evita meia correção
+
+Alterar um destes muda telas que ninguém pediu pra mexer. A regra é a mesma
+sempre: **alteração condicional, comportamento antigo intacto por padrão** — um
+parâmetro opcional, um marcador na string, uma flag que só o fluxo do chamado
+liga — e regressão do outro consumidor no roteiro de teste.
+
+| Objeto | Biblioteca | Quem mais usa |
+|---|---|---|
+| `w_preview_gen` | `aplgen50` | preview de relatório de **todo** o sistema |
+| `f_ajusta_win_font_color`, `f_ajusta_dw_font_color` | `aplgen50` (`font_color.srf`) | toda janela que passa pelo ajuste de fonte/cor |
+| `w_exibe_inst` | `osgen50` | agenda **e** laboratório (`u_dw_smm_lab`) |
+| `u_dw_pac` | `aplgen50/aplg50_2` | toda tela de paciente (~19 objetos) |
+| `w_main_frame` | `aplgen50` | o sistema inteiro |
+
+Antes de propor diff num objeto compartilhado, meça o raio de alcance com
+número. Se a correção "de verdade" mexe em algo assim, **ela não cabe num chamado
+de tela**: corrija dentro do fluxo do chamado e registre a pendência
+quantificada. Causa-raiz encontrada não é o mesmo que causa-raiz a corrigir
+neste ticket.
+
+## O que nunca entra numa proposta
+
+- **`UPDATE` ou `DELETE`**, salvo pedido explícito do dev.
+- **SQL embutido novo sem aviso**: se a proposta cria SQL no fonte, isso vai dito
+  em `risks` — o time roda revisão específica antes do PR.
+- **Mudança visual não pedida.** Manter a aparência que o operador já conhece é
+  requisito, mesmo quando a antiga é pior: regressão visual volta como chamado.
+  Copie os valores do objeto que exibia antes (tamanho, posição, cor, borda,
+  foco) em vez de redesenhar, e leia cor da propriedade em vez de estimar.
+
+## Pendências conhecidas (fora do escopo de chamado de tela)
+
+Causas reais, já diagnosticadas, com raio de alcance grande demais pra entrar num
+chamado comum. Se a análise chegar numa delas, **cite e siga** — não proponha
+diff:
+
+1. `font_color.srf:787` — `Font.Face` trocado para Segoe UI **depois** de o PB
+   calcular `height.autosize` com Tahoma 8; o objeto reserva altura a menos e
+   corta o fim do texto. Exposição medida: 1027 DataWindows com
+   `height.autosize=yes`, 984 delas com fonte de projeto legada.
+2. `w_smk01_n.srw:1797` — `MID(...,1,2000)` grava `smk.smk_inst_operador`
+   truncado em 2000 caracteres, apesar de a coluna ser `text`.
+
 ## A mensagem da tela quase nunca está literal no código
 
 **Regra geral, e a armadilha mais cara deste codebase.** O texto que o usuário vê
