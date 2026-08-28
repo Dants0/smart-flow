@@ -42,6 +42,7 @@ O **Trace Intelligence Pro** é uma ferramenta de engenharia forense de alta per
     OPENAI_API_KEY=sua_chave_openai
     GEMINI_API_KEY=sua_chave_gemini
     ANTHROPIC_API_KEY=sua_chave_anthropic
+    CLAUDE_CODE_OAUTH_TOKEN=seu_token_oauth   # alternativa à chave de API
     GROQ_API_KEY=sua_chave_groq
     AZURE_OPENAI_ENDPOINT=https://sua-empresa.openai.azure.com/
     AZURE_OPENAI_KEY=sua_chave_azure

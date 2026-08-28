@@ -82,8 +82,9 @@ services:
     build: ./app_trace
     environment:
       PORT: ":8070"
-      # Chaves opcionais: o backend manda a dele na requisição.
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      # Chave opcional: o backend manda a credencial da Anthropic na requisição
+      # (chave de API ou token OAuth, ver Configurações > IA), então nada de
+      # Anthropic precisa subir aqui.
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
     ports:
       - "8070:8070"

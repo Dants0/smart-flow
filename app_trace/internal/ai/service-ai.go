@@ -149,12 +149,19 @@ func callOpenAI(groups []models.TraceGroup, bugDesc string, modelAi string, keys
 }
 
 func callAnthropic(groups []models.TraceGroup, bugDesc string, modelAi string, keys models.APIKeys) (string, error) {
+	// Duas credenciais possíveis, e cada uma viaja num header diferente: a chave
+	// de API em `x-api-key`, o token OAuth (o CLAUDE_CODE_OAUTH_TOKEN, que é o
+	// que a conta corporativa emite) em `Authorization: Bearer` + o beta
+	// `oauth-2025-04-20`, sem o qual /v1/messages recusa. Trocar os headers dá
+	// 401 sem dizer qual dos dois caminhos foi tomado.
+	oauthToken := keys.AnthropicOAuth
 	apiKey := keys.Anthropic
-	if apiKey == "" {
-		apiKey = os.Getenv("ANTHROPIC_API_KEY") // Fallback
+	if apiKey == "" && oauthToken == "" {
+		apiKey = os.Getenv("ANTHROPIC_API_KEY")           // Fallback
+		oauthToken = os.Getenv("CLAUDE_CODE_OAUTH_TOKEN") // Fallback
 	}
-	if apiKey == "" {
-		return "", fmt.Errorf("API Key da Anthropic não informada")
+	if apiKey == "" && oauthToken == "" {
+		return "", fmt.Errorf("credencial da Anthropic não informada (nem chave de API, nem token OAuth)")
 	}
 
 	filteredEvents := filterEvents(groups)
@@ -191,7 +198,12 @@ func callAnthropic(groups []models.TraceGroup, bugDesc string, modelAi string, k
 		return "", err
 	}
 
-	req.Header.Set("x-api-key", apiKey)
+	if apiKey != "" {
+		req.Header.Set("x-api-key", apiKey)
+	} else {
+		req.Header.Set("Authorization", "Bearer "+oauthToken)
+		req.Header.Set("anthropic-beta", "oauth-2025-04-20")
+	}
 	req.Header.Set("anthropic-version", "2023-06-01")
 	req.Header.Set("content-type", "application/json")
 

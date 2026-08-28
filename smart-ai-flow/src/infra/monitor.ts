@@ -218,16 +218,27 @@ export async function checkResources(userId?: string): Promise<ResourceStatus[]>
   const anthropicActive = settings.aiProvider === 'anthropic';
   const openaiActive = settings.aiProvider === 'openai';
 
-  const describeLlm = (hasKey: boolean, active: boolean, model: string) => {
-    if (!hasKey) return active ? 'ATIVO, mas sem chave — a análise vai falhar' : 'sem chave (inativo)';
+  const describeLlm = (hasKey: boolean, active: boolean, model: string, credencial = 'chave') => {
+    if (!hasKey) {
+      return active
+        ? `ATIVO, mas sem ${credencial} — a análise vai falhar`
+        : `sem ${credencial} (inativo)`;
+    }
     return active ? `ATIVO · modelo ${model}` : `configurado, inativo · modelo ${model}`;
   };
+
+  // Qual credencial está em uso vale a linha: chave e token dão o MESMO 401
+  // quando o header está errado, e o monitor é onde o dev olha primeiro.
+  const credencialAnthropic =
+    settings.anthropicAuthType === 'oauth' ? 'token OAuth' : 'chave de API';
 
   const anthropic: ResourceStatus = {
     id: 'anthropic',
     label: 'Anthropic API',
-    ok: anthropicActive ? !!settings.anthropicApiKey : true,
-    detail: describeLlm(!!settings.anthropicApiKey, anthropicActive, settings.model),
+    ok: anthropicActive ? !!settings.anthropicCredential : true,
+    detail: settings.anthropicCredential
+      ? `${describeLlm(true, anthropicActive, settings.model)} · ${credencialAnthropic}`
+      : describeLlm(false, anthropicActive, settings.model, credencialAnthropic),
   };
   const openai: ResourceStatus = {
     id: 'openai',

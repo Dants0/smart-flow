@@ -178,8 +178,14 @@ model Job {
 model PlatformSettings {
   id Int @id @default(1)
 
-  anthropicApiKey String?
-  model           String  @default("claude-sonnet-5")
+  // A credencial da Anthropic, seja qual for o tipo — a conta corporativa
+  // emite token OAuth (`CLAUDE_CODE_OAUTH_TOKEN`) no lugar de chave de API, e
+  // cada um viaja num header diferente. Guarda só a que está em uso: trocar o
+  // tipo pela tela apaga a anterior, pra não existir segredo órfão no banco.
+  anthropicCredential String?
+  anthropicAuthType   String  @default("apiKey") // 'apiKey' | 'oauth'
+
+  model String @default("claude-sonnet-5")
 
   aiProvider   String  @default("anthropic") // 'anthropic' | 'openai'
   openaiApiKey String?

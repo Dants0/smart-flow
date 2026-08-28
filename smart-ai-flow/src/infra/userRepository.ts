@@ -98,6 +98,31 @@ export async function authenticate(username: string, password: string): Promise<
   return toAuthUser(row);
 }
 
+/**
+ * Redefine a senha pelo nome de usuário, sem exigir a senha antiga — é o que
+ * sustenta a tela de "esqueci minha senha".
+ *
+ * Zera `mustChangePassword` pelo mesmo motivo de `updateUser`: quem acabou de
+ * escolher a senha não precisa ser cobrado a escolher de novo no login seguinte.
+ *
+ * Devolve `null` quando o usuário não existe — a tela precisa dizer isso, e
+ * esconder não protege ninguém aqui: qualquer um já pode trocar a senha de
+ * qualquer conta por esta porta (ver a rota).
+ */
+export async function resetPasswordByUsername(
+  username: string,
+  password: string,
+): Promise<AuthUser | null> {
+  const row = await prisma.user.findUnique({ where: { username } });
+  if (!row) return null;
+
+  const atualizado = await prisma.user.update({
+    where: { id: row.id },
+    data: { passwordHash: hashPassword(password), mustChangePassword: false },
+  });
+  return toAuthUser(atualizado);
+}
+
 export async function createUser(input: {
   username: string;
   displayName: string;

@@ -2,7 +2,12 @@
 
 import { useEffect, useState } from "react";
 import { LuKeyRound, LuLoaderCircle, LuTriangleAlert } from "react-icons/lu";
-import { getSettings, updateSettings, type PlatformSettingsPatch } from "@/lib/api";
+import {
+  getSettings,
+  updateSettings,
+  type AnthropicAuthType,
+  type PlatformSettingsPatch,
+} from "@/lib/api";
 import { TextField, ChoiceField, SaveBar, SettingsSection, FieldGroup } from "@/components/settings/fields";
 import { SkillsSection } from "@/components/settings/SkillsSection";
 
@@ -13,8 +18,12 @@ export default function AiSettingsPage() {
   const [error, setError] = useState<string | null>(null);
 
   const [provider, setProvider] = useState("anthropic");
-  const [anthropicKey, setAnthropicKey] = useState("");
-  const [anthropicKeySet, setAnthropicKeySet] = useState(false);
+  const [anthropicCred, setAnthropicCred] = useState("");
+  const [anthropicCredSet, setAnthropicCredSet] = useState(false);
+  const [anthropicAuthType, setAnthropicAuthType] = useState<AnthropicAuthType>("apiKey");
+  // O tipo que veio do banco: comparar com o escolhido é o que diz se a
+  // credencial guardada vai ser apagada por esta troca.
+  const [tipoSalvo, setTipoSalvo] = useState<AnthropicAuthType>("apiKey");
   const [model, setModel] = useState("");
   const [openaiKey, setOpenaiKey] = useState("");
   const [openaiKeySet, setOpenaiKeySet] = useState(false);
@@ -25,7 +34,9 @@ export default function AiSettingsPage() {
     getSettings()
       .then((s) => {
         setProvider(s.aiProvider);
-        setAnthropicKeySet(s.anthropicApiKeySet);
+        setAnthropicCredSet(s.anthropicCredentialSet);
+        setAnthropicAuthType(s.anthropicAuthType);
+        setTipoSalvo(s.anthropicAuthType);
         setModel(s.model);
         setOpenaiKeySet(s.openaiApiKeySet);
         setOpenaiModel(s.openaiModel);
@@ -44,14 +55,16 @@ export default function AiSettingsPage() {
         aiProvider: provider,
         model,
         openaiModel,
+        anthropicAuthType,
       };
-      if (anthropicKey.trim()) patch.anthropicApiKey = anthropicKey.trim();
+      if (anthropicCred.trim()) patch.anthropicCredential = anthropicCred.trim();
       if (openaiKey.trim()) patch.openaiApiKey = openaiKey.trim();
 
       const updated = await updateSettings(patch);
-      setAnthropicKeySet(updated.anthropicApiKeySet);
+      setAnthropicCredSet(updated.anthropicCredentialSet);
+      setTipoSalvo(updated.anthropicAuthType);
       setOpenaiKeySet(updated.openaiApiKeySet);
-      setAnthropicKey("");
+      setAnthropicCred("");
       setOpenaiKey("");
       setSaved(true);
     } catch (err) {
@@ -70,11 +83,21 @@ export default function AiSettingsPage() {
     );
   }
 
-  // Chave digitada mas ainda não salva já conta: senão o aviso apareceria
+  // Credencial digitada mas ainda não salva já conta: senão o aviso apareceria
   // enquanto o usuário está justamente preenchendo o campo.
+  const anthropicPronta = anthropicCredSet || !!anthropicCred.trim();
   const activeKeySet =
-    provider === "openai" ? openaiKeySet || !!openaiKey.trim() : anthropicKeySet || !!anthropicKey.trim();
+    provider === "openai" ? openaiKeySet || !!openaiKey.trim() : anthropicPronta;
   const missingActiveKey = !activeKeySet;
+
+  // Trocar o tipo apaga a credencial guardada no banco — o backend faz isso de
+  // propósito (chave mandada como Bearer só dá 401). Avisa ANTES de salvar,
+  // enquanto ainda dá pra colar a nova ou voltar o seletor.
+  const trocaApagaCredencial =
+    anthropicAuthType !== tipoSalvo && anthropicCredSet && !anthropicCred.trim();
+
+  const rotuloCredencial =
+    anthropicAuthType === "oauth" ? "Token OAuth" : "Chave de API";
 
   return (
     <div className="flex flex-col gap-6">
@@ -93,8 +116,9 @@ export default function AiSettingsPage() {
               value: "anthropic",
               label: "Anthropic",
               description: model || "claude-sonnet-5",
-              // A chave só é cobrada no provider escolhido: ter só uma configurada é normal.
-              warning: anthropicKeySet || anthropicKey.trim() ? undefined : "sem chave configurada",
+              // A credencial só é cobrada no provider escolhido: ter só uma
+              // configurada é normal.
+              warning: anthropicPronta ? undefined : "sem credencial configurada",
             },
             {
               value: "openai",
@@ -109,10 +133,12 @@ export default function AiSettingsPage() {
           <p className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs leading-relaxed text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-300">
             <LuTriangleAlert className="mt-0.5 size-4 shrink-0" />
             <span>
-              <strong>{provider === "openai" ? "OpenAI" : "Anthropic"} está selecionada mas não tem
-              chave.</strong>{" "}
-              Enquanto isso, toda análise vai falhar e o card cai em ERRO. Preencha a chave abaixo ou
-              troque o provider.
+              <strong>
+                {provider === "openai" ? "OpenAI" : "Anthropic"} está selecionada mas não tem
+                credencial.
+              </strong>{" "}
+              Enquanto isso, toda análise vai falhar e o card cai em ERRO. Preencha a credencial
+              abaixo ou troque o provider.
             </span>
           </p>
         )}
@@ -130,12 +156,39 @@ export default function AiSettingsPage() {
             )
           }
         >
+          <ChoiceField
+            label="Como autenticar"
+            hint="A conta corporativa da Anthropic emite token OAuth (o mesmo CLAUDE_CODE_OAUTH_TOKEN do Claude Code) no lugar de chave de API. Os dois viajam em headers diferentes — mandar um no lugar do outro dá 401."
+            value={anthropicAuthType}
+            onChange={(v) => setAnthropicAuthType(v as AnthropicAuthType)}
+            options={[
+              { value: "apiKey", label: "Chave de API", description: "sk-ant-api..." },
+              { value: "oauth", label: "Token OAuth", description: "CLAUDE_CODE_OAUTH_TOKEN" },
+            ]}
+          />
+
+          {trocaApagaCredencial && (
+            <p className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs leading-relaxed text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-300">
+              <LuTriangleAlert className="mt-0.5 size-4 shrink-0" />
+              <span>
+                Salvar com o tipo trocado <strong>apaga a credencial guardada</strong> — ela não
+                serve para o outro header. Cole a nova abaixo, ou volte o seletor.
+              </span>
+            </p>
+          )}
+
           <TextField
-            label="API Key"
+            label={rotuloCredencial}
             type="password"
-            value={anthropicKey}
-            onChange={setAnthropicKey}
-            placeholder={anthropicKeySet ? "•••••••• (já configurada — deixe em branco pra manter)" : "sk-ant-..."}
+            value={anthropicCred}
+            onChange={setAnthropicCred}
+            placeholder={
+              anthropicCredSet && anthropicAuthType === tipoSalvo
+                ? "•••••••• (já configurada — deixe em branco pra manter)"
+                : anthropicAuthType === "oauth"
+                  ? "sk-ant-oat..."
+                  : "sk-ant-api..."
+            }
           />
           <TextField label="Modelo" value={model} onChange={setModel} placeholder="claude-sonnet-5" />
         </FieldGroup>

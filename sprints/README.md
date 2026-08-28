@@ -58,6 +58,8 @@ solicitação, criado ao final do atendimento.
 | [2026-08-25-02](2026-08-25-02-a-venda-da-analise.md) | A venda da análise: o post-mortem do 51229 vira regra da esteira |
 | [2026-08-26-01](2026-08-26-01-chamado-sumido-do-aviso-e-saldo-da-api.md) | O chamado que sumiu do aviso, e o 400 que não é do plano Pro |
 | [2026-08-28-01](2026-08-28-01-url-base-do-jira-com-barra.md) | A barra no fim da URL do Jira, e a tela que não deixava consertá-la |
+| [2026-08-28-02](2026-08-28-02-credencial-oauth-da-anthropic.md) | Anthropic: aceitar chave de API **ou** token OAuth corporativo |
+| [2026-08-28-03](2026-08-28-03-recuperar-senha-da-plataforma.md) | Recuperar a senha da plataforma — versão provisória, sem autenticação |
 
 ## Template
 

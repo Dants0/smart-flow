@@ -36,8 +36,10 @@ Duas paradas antecipadas, ambas deliberadas:
   `patch --dry-run`, backup e reversão de um clique.
 - **O backend nunca decide sozinho no controle de versão.** Commit, push e PR só
   acontecem por clique explícito, em VERSIONAMENTO, com a credencial do dev.
-- **A chave de IA vive só no backend** (`infra/llm.ts`, vinda de Configurações →
-  IA). Todo consumo vira linha em `Run`.
+- **A credencial de IA vive só no backend** (`infra/llm.ts`, vinda de
+  Configurações → IA). A da Anthropic é chave de API **ou** token OAuth
+  (`CLAUDE_CODE_OAUTH_TOKEN`, o que a conta corporativa emite) — headers
+  diferentes, o tipo é escolhido na tela. Todo consumo vira linha em `Run`.
 - Contexto da IA = `CLAUDE.md` do sistema + **código real do repositório, nos
   dois estágios** + inventário de reuso (`git grep`) + RAG do PB Insight + skill
   do time (Configurações → IA) + o chamado.

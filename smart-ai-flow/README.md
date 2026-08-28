@@ -45,7 +45,7 @@ prisma/          schema.prisma (Card, History, Run)
 ## Rodar
 
 ```bash
-cp .env.example .env      # coloque o ANTHROPIC_API_KEY corporativo
+cp .env.example .env      # só bootstrap: banco, JWT_SECRET, ENCRYPTION_KEY
 docker compose up -d      # postgres
 npm install
 npm run db:push

@@ -42,12 +42,13 @@ func main() {
 
 		// Lê as chaves do payload enviado pelo Javascript
 		apiKeys := models.APIKeys{
-			Gemini:    c.PostForm("key_gemini"),
-			OpenAI:    c.PostForm("key_openai"),
-			Anthropic: c.PostForm("key_anthropic"),
-			Groq:      c.PostForm("key_groq"),
-			AzureEP:   c.PostForm("key_azure_ep"),
-			Azure:     c.PostForm("key_azure"),
+			Gemini:         c.PostForm("key_gemini"),
+			OpenAI:         c.PostForm("key_openai"),
+			Anthropic:      c.PostForm("key_anthropic"),
+			AnthropicOAuth: c.PostForm("key_anthropic_oauth"),
+			Groq:           c.PostForm("key_groq"),
+			AzureEP:        c.PostForm("key_azure_ep"),
+			Azure:          c.PostForm("key_azure"),
 		}
 
 		form, err := c.MultipartForm()
@@ -162,12 +163,13 @@ func main() {
 
 		// Lê as chaves do payload enviado pelo Javascript
 		apiKeys := models.APIKeys{
-			Gemini:    c.PostForm("key_gemini"),
-			OpenAI:    c.PostForm("key_openai"),
-			Anthropic: c.PostForm("key_anthropic"),
-			Groq:      c.PostForm("key_groq"),
-			AzureEP:   c.PostForm("key_azure_ep"),
-			Azure:     c.PostForm("key_azure"),
+			Gemini:         c.PostForm("key_gemini"),
+			OpenAI:         c.PostForm("key_openai"),
+			Anthropic:      c.PostForm("key_anthropic"),
+			AnthropicOAuth: c.PostForm("key_anthropic_oauth"),
+			Groq:           c.PostForm("key_groq"),
+			AzureEP:        c.PostForm("key_azure_ep"),
+			Azure:          c.PostForm("key_azure"),
 		}
 
 		var wg sync.WaitGroup

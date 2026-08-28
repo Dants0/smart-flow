@@ -21,7 +21,11 @@ type APIKeys struct {
 	Gemini    string
 	OpenAI    string
 	Anthropic string
-	Groq      string
-	AzureEP   string
-	Azure     string
+	// Token OAuth da Anthropic (o CLAUDE_CODE_OAUTH_TOKEN). A conta corporativa
+	// não emite chave de API, e o token viaja noutro header — por isso um campo
+	// separado em vez de reaproveitar Anthropic.
+	AnthropicOAuth string
+	Groq           string
+	AzureEP        string
+	Azure          string
 }

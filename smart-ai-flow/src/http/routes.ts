@@ -56,6 +56,7 @@ import {
   deleteUser,
   findUserById,
   listUsers,
+  resetPasswordByUsername,
   updateUser,
 } from '../infra/userRepository';
 import {
@@ -67,6 +68,7 @@ import {
   LoginSchema,
   RejectCardSchema,
   ResolveCardSchema,
+  ResetPasswordSchema,
   RetryCardSchema,
   UpdateMeSchema,
   PreviewJqlSchema,
@@ -112,6 +114,34 @@ export async function routes(app: FastifyInstance) {
   /** Diz ao front se ainda precisa criar o primeiro usuário. Único endpoint público além do login. */
   app.get('/auth/status', async () => {
     return { needsBootstrap: (await countUsers()) === 0 };
+  });
+
+  /**
+   * "Esqueci minha senha": nome de usuário + senha nova, e pronto.
+   *
+   * ISTO NÃO AUTENTICA NINGUÉM. Não há e-mail, token, pergunta secreta nem
+   * senha antiga — quem alcança esta rota troca a senha de QUALQUER conta,
+   * inclusive a de um admin. É uma decisão consciente e temporária: a
+   * plataforma roda só na rede interna, e a alternativa hoje é `psql` na mão
+   * porque não existe recuperação nenhuma.
+   *
+   * O QUE PRECISA ACONTECER ANTES DE ISTO SAIR DA REDE INTERNA (qualquer uma
+   * das duas resolve): trocar por reset de admin autenticado, ou por token de
+   * uso único enviado por e-mail. Enquanto isso, cada troca fica no log — é a
+   * única trilha que sobra se alguém usar isto pra entrar na conta de outro.
+   */
+  app.post('/auth/reset-password', async (req, reply) => {
+    const body = parseBody(ResetPasswordSchema, req, reply);
+    if (!body) return;
+
+    const user = await resetPasswordByUsername(body.username, body.password);
+    if (!user) return reply.code(404).send({ error: 'usuário não encontrado' });
+
+    req.log.warn(
+      { username: user.username, ip: req.ip },
+      'senha redefinida pela tela pública de recuperação',
+    );
+    return { ok: true, username: user.username };
   });
 
   app.post('/auth/login', async (req, reply) => {
@@ -837,7 +867,8 @@ export async function routes(app: FastifyInstance) {
     secured.get('/settings', async () => {
       const s = await getSettings();
       return {
-        anthropicApiKeySet: !!s.anthropicApiKey,
+        anthropicCredentialSet: !!s.anthropicCredential,
+        anthropicAuthType: s.anthropicAuthType,
         model: s.model,
         aiProvider: s.aiProvider,
         openaiApiKeySet: !!s.openaiApiKey,
@@ -863,7 +894,8 @@ export async function routes(app: FastifyInstance) {
 
       const updated = await updateSettings(body);
       return {
-        anthropicApiKeySet: !!updated.anthropicApiKey,
+        anthropicCredentialSet: !!updated.anthropicCredential,
+        anthropicAuthType: updated.anthropicAuthType,
         model: updated.model,
         aiProvider: updated.aiProvider,
         openaiApiKeySet: !!updated.openaiApiKey,

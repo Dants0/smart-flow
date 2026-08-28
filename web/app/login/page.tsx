@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { LuLoaderCircle, LuLogIn, LuUserPlus, LuWorkflow } from "react-icons/lu";
 import { authStatus, bootstrapAdmin, login } from "@/lib/api";
@@ -140,6 +141,16 @@ export default function LoginPage() {
             )}
             {needsBootstrap ? "Criar administrador e entrar" : "Entrar"}
           </button>
+
+          {/* Só no login: durante o bootstrap não existe senha a recuperar. */}
+          {!needsBootstrap && (
+            <Link
+              href="/recuperar-senha"
+              className="text-center text-xs text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200"
+            >
+              Esqueci minha senha
+            </Link>
+          )}
         </form>
       </div>
     </div>

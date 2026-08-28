@@ -1,6 +1,11 @@
 import Anthropic from '@anthropic-ai/sdk';
+import type { ClientOptions } from '@anthropic-ai/sdk';
 import type { CardImage } from '../domain/card';
-import { getSettings, type PlatformSettings } from './settingsRepository';
+import {
+  getSettings,
+  type AnthropicAuthType,
+  type PlatformSettings,
+} from './settingsRepository';
 
 /**
  * Camada única por onde ANALISE e DESENVOLVIMENTO falam com o LLM.
@@ -33,14 +38,54 @@ export async function callLlm(req: LlmRequest): Promise<LlmResult> {
   return settings.aiProvider === 'openai' ? callOpenAI(req, settings) : callAnthropic(req, settings);
 }
 
+/**
+ * Monta as opções do cliente conforme o tipo de credencial. Pura de propósito:
+ * é a regra que decide em qual header o segredo viaja, e errar isso dá 401 sem
+ * nenhuma pista de qual dos dois caminhos foi tomado.
+ *
+ * - **chave de API** (`sk-ant-api...`): header `x-api-key`, é o `apiKey` do SDK.
+ * - **token OAuth** (`CLAUDE_CODE_OAUTH_TOKEN`, o que a conta corporativa
+ *   emite): header `Authorization: Bearer`, é o `authToken` do SDK. O
+ *   `/v1/messages` só aceita esse caminho com o beta `oauth-2025-04-20` junto —
+ *   sem ele a requisição é recusada.
+ *
+ * O campo não usado vai **explicitamente `null`**, e essa é a linha que mais
+ * importa aqui: o SDK preenche `apiKey` com `process.env.ANTHROPIC_API_KEY` e
+ * `authToken` com `ANTHROPIC_AUTH_TOKEN` quando você omite, e a chave de API
+ * vence o token na hora de montar o header. Uma variável esquecida no ambiente
+ * do container sequestraria silenciosamente a credencial escolhida na tela.
+ */
+export function anthropicClientOptions(
+  authType: AnthropicAuthType,
+  credential: string,
+): ClientOptions {
+  if (authType === 'oauth') {
+    return {
+      apiKey: null,
+      authToken: credential,
+      defaultHeaders: { 'anthropic-beta': 'oauth-2025-04-20' },
+    };
+  }
+  return { apiKey: credential, authToken: null };
+}
+
+/** O que dizer quando não há credencial — a mensagem muda com o tipo escolhido. */
+function credencialFaltando(authType: AnthropicAuthType): string {
+  return authType === 'oauth'
+    ? 'Token OAuth da Anthropic não configurado — cole o CLAUDE_CODE_OAUTH_TOKEN em Configurações > IA.'
+    : 'Chave da Anthropic não configurada — veja Configurações > IA.';
+}
+
 async function callAnthropic(
   { system, userText, images, maxTokens }: LlmRequest,
   settings: PlatformSettings,
 ): Promise<LlmResult> {
-  if (!settings.anthropicApiKey) {
-    throw new Error('Chave da Anthropic não configurada — veja Configurações > IA.');
+  if (!settings.anthropicCredential) {
+    throw new Error(credencialFaltando(settings.anthropicAuthType));
   }
-  const anthropic = new Anthropic({ apiKey: settings.anthropicApiKey });
+  const anthropic = new Anthropic(
+    anthropicClientOptions(settings.anthropicAuthType, settings.anthropicCredential),
+  );
 
   const content: Anthropic.MessageParam['content'] = [
     ...(images ?? []).map(

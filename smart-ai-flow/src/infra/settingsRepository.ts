@@ -6,8 +6,17 @@ import { prisma } from './db';
  * pra tudo que não é bootstrap. Lida a cada chamada (nunca cacheada em módulo)
  * pra uma troca na tela de Configurações valer na hora, sem reiniciar o backend.
  */
+/**
+ * Como autenticar na Anthropic. Não é preferência: a conta corporativa emite
+ * token OAuth (`CLAUDE_CODE_OAUTH_TOKEN`) e não emite chave de API, e os dois
+ * viajam em headers diferentes — mandar um no lugar do outro dá 401.
+ */
+export type AnthropicAuthType = 'apiKey' | 'oauth';
+
 export interface PlatformSettings {
-  anthropicApiKey: string | null;
+  /** Credencial da Anthropic em uso — chave de API OU token OAuth, nunca as duas. */
+  anthropicCredential: string | null;
+  anthropicAuthType: AnthropicAuthType;
   model: string;
 
   aiProvider: string;
@@ -42,6 +51,7 @@ export const DEFAULT_ASSIGNED_JQL =
 
 const DEFAULTS = {
   model: 'claude-sonnet-5',
+  anthropicAuthType: 'apiKey',
   aiProvider: 'anthropic',
   openaiModel: 'gpt-4o',
   traceServiceUrl: TRACE_SERVICE_URL,
@@ -108,12 +118,25 @@ export type PlatformSettingsPatch = Partial<
 
 /** Atualiza só os campos enviados. String vazia é tratada como "sem valor" (não apaga sem querer). */
 export async function updateSettings(patch: PlatformSettingsPatch): Promise<PlatformSettings> {
-  await ensureRow();
+  const atual = await ensureRow();
 
   const data: Record<string, string | null> = {};
   for (const [key, value] of Object.entries(patch)) {
     if (value === undefined) continue;
     data[key] = key === 'jiraBaseUrl' ? normalizeBaseUrl(value) : value === '' ? null : value;
+  }
+
+  // Trocar o tipo de credencial apaga a que estava guardada. Uma chave de API
+  // mandada como Bearer (ou o contrário) só produz 401 — manter o segredo velho
+  // no banco seria guardar algo que não serve pra nada e ainda vaza se alguém
+  // voltar o tipo sem querer. Quem manda a nova credencial no mesmo patch não é
+  // afetado: o valor enviado vence.
+  if (
+    typeof data.anthropicAuthType === 'string' &&
+    data.anthropicAuthType !== atual.anthropicAuthType &&
+    data.anthropicCredential === undefined
+  ) {
+    data.anthropicCredential = null;
   }
 
   const row = await prisma.platformSettings.update({ where: { id: 1 }, data });
@@ -122,7 +145,8 @@ export async function updateSettings(patch: PlatformSettingsPatch): Promise<Plat
 
 function toSettings(row: Awaited<ReturnType<typeof ensureRow>>): PlatformSettings {
   return {
-    anthropicApiKey: row.anthropicApiKey,
+    anthropicCredential: row.anthropicCredential,
+    anthropicAuthType: row.anthropicAuthType as AnthropicAuthType,
     model: row.model,
     aiProvider: row.aiProvider,
     openaiApiKey: row.openaiApiKey,

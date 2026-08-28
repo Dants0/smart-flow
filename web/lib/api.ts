@@ -4,7 +4,12 @@ import { getToken, redirectToLogin, type AuthUser } from "./auth";
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3333";
 
 /** Rotas públicas — não mandam token e não redirecionam em 401. */
-const PUBLIC_PATHS = ["/auth/login", "/auth/status", "/auth/bootstrap"];
+const PUBLIC_PATHS = [
+  "/auth/login",
+  "/auth/status",
+  "/auth/bootstrap",
+  "/auth/reset-password",
+];
 
 /** Erro de API que preserva o `code` — a UI decide o que mostrar por ele, não pela mensagem. */
 export class ApiError extends Error {
@@ -56,6 +61,21 @@ export function authStatus(): Promise<{ needsBootstrap: boolean }> {
 
 export function login(username: string, password: string): Promise<{ token: string; user: AuthUser }> {
   return request("/auth/login", { method: "POST", body: JSON.stringify({ username, password }) });
+}
+
+/**
+ * Redefine a senha só com usuário + senha nova. Provisório e sem autenticação
+ * nenhuma — ver o comentário da rota `/auth/reset-password` no backend antes de
+ * expor esta aplicação fora da rede interna.
+ */
+export function resetPassword(
+  username: string,
+  password: string,
+): Promise<{ ok: true; username: string }> {
+  return request("/auth/reset-password", {
+    method: "POST",
+    body: JSON.stringify({ username, password }),
+  });
 }
 
 export function bootstrapAdmin(input: {
@@ -247,8 +267,13 @@ export function deleteCard(id: string): Promise<void> {
   return request(`/cards/${id}`, { method: "DELETE" });
 }
 
+/** Chave de API (header `x-api-key`) ou token OAuth (`Authorization: Bearer`). */
+export type AnthropicAuthType = "apiKey" | "oauth";
+
 export interface PlatformSettingsView {
-  anthropicApiKeySet: boolean;
+  /** true = há credencial guardada. O valor em si nunca volta do backend. */
+  anthropicCredentialSet: boolean;
+  anthropicAuthType: AnthropicAuthType;
   model: string;
   aiProvider: string;
   openaiApiKeySet: boolean;
@@ -265,7 +290,8 @@ export interface PlatformSettingsView {
 }
 
 export type PlatformSettingsPatch = Partial<{
-  anthropicApiKey: string;
+  anthropicCredential: string;
+  anthropicAuthType: AnthropicAuthType;
   model: string;
   aiProvider: string;
   openaiApiKey: string;

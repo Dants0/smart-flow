@@ -63,6 +63,16 @@ export const LoginSchema = z.object({
   password: z.string().min(1),
 });
 
+/**
+ * Recuperação de senha — nome de usuário + senha nova, sem nada que prove a
+ * identidade de quem pede. É PROVISÓRIO e deliberado (ver a rota
+ * `/auth/reset-password`): a plataforma roda só na rede interna por enquanto.
+ */
+export const ResetPasswordSchema = z.object({
+  username: z.string().min(1, 'informe o usuário'),
+  password: z.string().min(8, 'senha precisa de ao menos 8 caracteres'),
+});
+
 export const CreateUserSchema = z.object({
   username: z.string().min(3).regex(/^[a-z0-9._-]+$/i, 'use letras, números, ponto, hífen ou _'),
   displayName: z.string().min(1),
@@ -84,7 +94,10 @@ export const UpdateMeSchema = z.object({
 });
 
 export const UpdateSettingsSchema = z.object({
-  anthropicApiKey: z.string().optional(),
+  // A credencial e o tipo andam juntos: o backend precisa saber em qual header
+  // o segredo viaja, e trocar o tipo sem mandar credencial nova apaga a antiga.
+  anthropicCredential: z.string().optional(),
+  anthropicAuthType: z.enum(['apiKey', 'oauth']).optional(),
   model: z.string().optional(),
   aiProvider: z.enum(['anthropic', 'openai']).optional(),
   openaiApiKey: z.string().optional(),

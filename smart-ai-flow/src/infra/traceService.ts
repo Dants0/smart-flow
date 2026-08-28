@@ -58,8 +58,14 @@ export async function analyzeTraces(
 
   if (override?.apiKey) {
     appendApiKey(form, modelAi, override.apiKey, override.azureEndpoint);
-  } else if (settings.anthropicApiKey) {
-    form.append('key_anthropic', settings.anthropicApiKey);
+  } else if (settings.anthropicCredential) {
+    // O app_trace fala com a Anthropic por conta própria, então precisa saber o
+    // tipo da credencial tanto quanto este backend — o campo diz em qual header
+    // ele deve mandar o segredo.
+    form.append(
+      settings.anthropicAuthType === 'oauth' ? 'key_anthropic_oauth' : 'key_anthropic',
+      settings.anthropicCredential,
+    );
   }
 
   const resp = await fetch(`${settings.traceServiceUrl}/analyze-trace`, {
