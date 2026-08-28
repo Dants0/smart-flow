@@ -8,7 +8,6 @@ import {
   LuWorkflow,
   LuKeyRound,
   LuBellRing,
-  LuX,
   LuSettings,
   LuLightbulb,
   LuLogOut,
@@ -19,7 +18,6 @@ import {
   listModules,
   getCard,
   fetchPendingJiraIssues,
-  dismissPendingJiraIssue,
   ApiError,
   type PendingJiraIssue,
   type CardSummary,
@@ -161,13 +159,17 @@ function Board({ user }: { user: AuthUser }) {
     return () => clearInterval(id);
   }, [refreshPending, user.setupPending, jiraBlocked]);
 
-  async function handleDismissPending(key: string) {
+  /**
+   * Tira o chamado do aviso agora, sem gravar nada: o card acabou de ser aberto
+   * e o próximo poll já não o traz (o backend filtra o que virou card).
+   *
+   * Não existe "dispensar" — quem some com o aviso é o Jira. Chamado que não é
+   * mais seu se desvincula lá, e o banner passa a espelhar isso no poll
+   * seguinte. Um X aqui só criava um jeito silencioso e irreversível de esconder
+   * trabalho aberto.
+   */
+  function hidePending(key: string) {
     setPending((prev) => prev.filter((p) => p.key !== key));
-    try {
-      await dismissPendingJiraIssue(key);
-    } catch {
-      // se falhar, o próximo poll traz de volta — sem drama
-    }
   }
 
   const visibleStages = cards.some((c) => c.stage === "ERRO")
@@ -268,19 +270,12 @@ function Board({ user }: { user: AuthUser }) {
                 <span className="max-w-[220px] truncate text-zinc-500">{p.summary}</span>
                 <button
                   onClick={() => {
-                    handleDismissPending(p.key);
+                    hidePending(p.key);
                     openNewCard(p.key);
                   }}
                   className="rounded bg-amber-100 px-2 py-0.5 font-medium text-amber-700 hover:bg-amber-200 dark:bg-amber-900 dark:text-amber-300 dark:hover:bg-amber-800"
                 >
                   Criar card
-                </button>
-                <button
-                  onClick={() => handleDismissPending(p.key)}
-                  title="Dispensar"
-                  className="rounded p-0.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-600 dark:hover:bg-zinc-800"
-                >
-                  <LuX className="size-3.5" />
                 </button>
               </div>
             ))}

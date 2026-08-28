@@ -1,0 +1,12 @@
+-- Fim do "dispensar" no aviso de chamados atribuídos.
+--
+-- O X do banner gravava uma linha aqui e escondia o chamado PARA SEMPRE: era
+-- upsert, sem desfazer, sem validade e sem tela que mostrasse o que foi
+-- dispensado. Um clique errado tirava trabalho aberto do radar e só voltava por
+-- psql — foi o que aconteceu com o SMART-51993, dispensado em 2026-08-26 e
+-- procurado no Jira depois disso.
+--
+-- Não precisa existir: quem tira o chamado do aviso é o próprio Jira. Desvincular
+-- o assignee lá derruba o chamado da JQL, e o banner acompanha no poll seguinte —
+-- uma fonte da verdade só, e reversível no lugar onde o time já trabalha.
+DROP TABLE IF EXISTS "DismissedIssue";

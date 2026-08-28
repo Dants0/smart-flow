@@ -64,8 +64,16 @@ export default function JiraSettingsPage() {
     setSaved(false);
     setError(null);
 
+    // Barra no fim vira `//rest/api/2/...` e o Jira responde 404 — o mesmo
+    // endereço que o usuário digita certo tem que chegar certo no banco.
+    const urlLimpa = baseUrl.trim().replace(/\/+$/, "");
+    if (urlLimpa !== baseUrl) setBaseUrl(urlLimpa);
+
     // Confere ANTES de gravar. JQL inválida salva ficava calada: o board
     // respondia 502 e o dev via "nenhum chamado", sem ligação com a causa.
+    // Só bloqueia se o Jira recusou a CONSULTA (`error`): falha de conexão vira
+    // exceção lá atrás e cai em `falhaAoConferir`, que deixa salvar — senão uma
+    // URL base errada trancaria a própria tela que a conserta.
     const p = await conferir(jql);
     if (p?.error) {
       setError(`O Jira recusou a consulta: ${p.error}`);
@@ -74,9 +82,12 @@ export default function JiraSettingsPage() {
     }
 
     try {
-      const patch: PlatformSettingsPatch = { jiraBaseUrl: baseUrl, jiraAssignedJql: jql };
+      const patch: PlatformSettingsPatch = { jiraBaseUrl: urlLimpa, jiraAssignedJql: jql };
       await updateSettings(patch);
       setSaved(true);
+      // Reconfere com o endereço novo: se o erro era a URL, a legenda passa de
+      // "não deu pra conferir" pra contagem de chamados sem recarregar a tela.
+      void conferir(jql);
     } catch (err) {
       setError(err instanceof Error ? err.message : "falha ao salvar");
     } finally {

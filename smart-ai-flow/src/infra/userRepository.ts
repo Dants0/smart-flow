@@ -245,16 +245,3 @@ export async function getGitIdentity(
   if (!row.gitEmail) return null;
   return { name: row.gitName || row.displayName, email: row.gitEmail };
 }
-
-export async function listDismissed(userId: string): Promise<Set<string>> {
-  const rows = await prisma.dismissedIssue.findMany({ where: { userId }, select: { jiraKey: true } });
-  return new Set(rows.map((r) => r.jiraKey));
-}
-
-export async function dismissIssue(userId: string, jiraKey: string): Promise<void> {
-  await prisma.dismissedIssue.upsert({
-    where: { userId_jiraKey: { userId, jiraKey } },
-    update: {},
-    create: { userId, jiraKey },
-  });
-}

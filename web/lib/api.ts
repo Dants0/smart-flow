@@ -174,10 +174,6 @@ export function fetchPendingJiraIssues(): Promise<PendingJiraIssue[]> {
   return request("/jira/pending");
 }
 
-export function dismissPendingJiraIssue(key: string): Promise<void> {
-  return request(`/jira/pending/${encodeURIComponent(key)}/dismiss`, { method: "POST" });
-}
-
 export function getCard(id: string): Promise<Card> {
   return request(`/cards/${id}`);
 }

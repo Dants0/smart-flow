@@ -52,6 +52,21 @@ const DEFAULTS = {
 const LOOPBACK = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:|\/|$)/i;
 
 /**
+ * Tira a barra do fim da URL base. Quem monta caminho concatena `/rest/api/...`,
+ * então uma barra sobrando vira `//rest` — e o Jira Server responde a isso com
+ * `null for uri: .../com//rest/api/2/search`: um 404 que, lido de longe, parece
+ * consulta recusada.
+ *
+ * Roda também na LEITURA, de propósito: a linha já gravada com barra volta a
+ * funcionar na hora, sem depender de alguém abrir a tela e salvar de novo.
+ */
+export function normalizeBaseUrl(url: string | null): string | null {
+  if (url === null) return null;
+  const limpo = url.trim().replace(/\/+$/, '');
+  return limpo === '' ? null : limpo;
+}
+
+/**
  * Conserta a linha gravada antes de o backend passar a rodar em container: um
  * loopback salvo no banco aponta pro próprio container do backend e nunca
  * alcança o microserviço — é o que fazia app_trace e PB Insight aparecerem
@@ -98,7 +113,7 @@ export async function updateSettings(patch: PlatformSettingsPatch): Promise<Plat
   const data: Record<string, string | null> = {};
   for (const [key, value] of Object.entries(patch)) {
     if (value === undefined) continue;
-    data[key] = value === '' ? null : value;
+    data[key] = key === 'jiraBaseUrl' ? normalizeBaseUrl(value) : value === '' ? null : value;
   }
 
   const row = await prisma.platformSettings.update({ where: { id: 1 }, data });
@@ -113,7 +128,7 @@ function toSettings(row: Awaited<ReturnType<typeof ensureRow>>): PlatformSetting
     openaiApiKey: row.openaiApiKey,
     openaiModel: row.openaiModel,
     traceServiceUrl: row.traceServiceUrl,
-    jiraBaseUrl: row.jiraBaseUrl,
+    jiraBaseUrl: normalizeBaseUrl(row.jiraBaseUrl),
     jiraAssignedJql: row.jiraAssignedJql,
     pbInsightUrl: row.pbInsightUrl,
     skills: row.skills,

@@ -54,9 +54,7 @@ import {
   getGitIdentity,
   createUser,
   deleteUser,
-  dismissIssue,
   findUserById,
-  listDismissed,
   listUsers,
   updateUser,
 } from '../infra/userRepository';
@@ -716,12 +714,13 @@ export async function routes(app: FastifyInstance) {
       }
 
       try {
-        const [assigned, knownKeys, dismissed] = await Promise.all([
+        const [assigned, knownKeys] = await Promise.all([
           searchAssignedIssues(userId),
           findAllJiraKeys().then((keys) => new Set(keys)),
-          listDismissed(userId),
         ]);
-        return assigned.filter((i) => !knownKeys.has(i.key) && !dismissed.has(i.key));
+        // Único filtro local: o que já virou card. Não existe dispensar — o
+        // aviso espelha o Jira, e é lá que o chamado deixa de ser seu.
+        return assigned.filter((i) => !knownKeys.has(i.key));
       } catch (err) {
         // Negação de auth não é indisponibilidade: o backend já parou de tentar,
         // e o front precisa mostrar o que fazer em vez de ignorar como ruído.
@@ -792,11 +791,6 @@ export async function routes(app: FastifyInstance) {
     secured.post('/me/jira/unblock', async (req) => {
       await clearJiraAuthBlock(currentUserId(req));
       return findUserById(currentUserId(req));
-    });
-
-    secured.post('/jira/pending/:key/dismiss', async (req, reply) => {
-      await dismissIssue(currentUserId(req), (req.params as { key: string }).key);
-      return reply.code(204).send();
     });
 
     /**

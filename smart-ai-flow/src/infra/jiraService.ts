@@ -321,6 +321,21 @@ export interface JqlPreview {
 }
 
 /**
+ * A consulta é culpada ou o endereço é? Pura de propósito: é a regra que decide
+ * entre "arrume a JQL" e "arrume a URL base", e as duas mandam o dev pra lados
+ * opostos da tela.
+ *
+ * O Jira Server responde 400 com `errorMessages` quando não entende a JQL.
+ * Qualquer outro status é a instância — 404 `null for uri` é o caso clássico,
+ * uma URL base com barra no fim virando `//rest/api/2/search`. Tratar esse 404
+ * como consulta recusada trancava o dev num laço: a tela bloqueava o
+ * salvamento da URL base por causa do erro que a própria URL base causava.
+ */
+export function jqlFoiRecusada(status: number): boolean {
+  return status === 400;
+}
+
+/**
  * Roda a JQL com `maxResults` pequeno (é conferência, não listagem) e traduz os
  * ids de situação da consulta para os nomes que o dev lê no quadro.
  */
@@ -341,7 +356,13 @@ export async function previewJql(userId: string, jql: string): Promise<JqlPrevie
     } catch {
       // corpo não-JSON: fica o texto cru mesmo
     }
-    return { total: 0, keys: [], hidden: [], error: detalhe };
+
+    if (jqlFoiRecusada(resp.status)) {
+      return { total: 0, keys: [], hidden: [], error: detalhe };
+    }
+    throw new Error(
+      `o Jira respondeu ${resp.status} em /rest/api/2/search — confira a URL base em Configurações > Jira (${detalhe})`,
+    );
   }
 
   const data = (await resp.json()) as { total?: number; issues?: { key: string }[] };

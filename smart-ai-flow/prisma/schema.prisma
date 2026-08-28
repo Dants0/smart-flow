@@ -62,23 +62,10 @@ model User {
   bitbucketAppPasswordEnc String?
 
   cards           Card[]
-  dismissedIssues DismissedIssue[]
   history         History[]
   chatMessages    ChatMessage[]
 
   createdAt DateTime @default(now())
-}
-
-// Aviso de "chamado atribuído a você" que o dev dispensou. Por usuário e
-// persistido — antes era um Set em memória, global e perdido a cada restart.
-model DismissedIssue {
-  id      String   @id @default(uuid())
-  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  userId  String
-  jiraKey String
-  at      DateTime @default(now())
-
-  @@unique([userId, jiraKey])
 }
 
 model Card {
