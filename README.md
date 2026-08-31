@@ -58,6 +58,23 @@ O primeiro build leva alguns minutos. Depois disso:
 | PB Insight | http://localhost:4500 | RAG sobre o codebase |
 | Postgres | localhost:5432 | banco |
 
+Essas portas são as de fábrica. Se alguma já estiver ocupada na sua máquina (o
+`docker compose up` falha com *port is already allocated*), troque na seção
+**Portas** do `.env` da raiz — cada variável vale ao mesmo tempo para o processo
+dentro do container e para o que é publicado no host, então é uma linha só por
+serviço, e a URL que o front usa acompanha `BACKEND_PORT` sozinha:
+
+```env
+BACKEND_PORT=3333
+WEB_PORT=3000
+TRACE_PORT=8070
+PB_INSIGHT_PORT=4500
+DB_PORT=5432
+```
+
+Depois de trocar: `docker compose up -d --build` (o `web` precisa de build novo,
+porque o endereço da API é assado no bundle).
+
 ### 3. Criar o usuário administrador
 
 Abra **http://localhost:3000**. Na primeira vez a tela pede a criação do
@@ -245,6 +262,39 @@ endereços em `TRACE_SERVICE_URL` e `PB_INSIGHT_URL`; só sobrescreva no `.env` 
 os microserviços rodarem em outra máquina. Rodando o backend fora do Docker
 (`npm run dev`), sem essas variáveis, o padrão volta a ser `localhost`.
 
+### Quando a IA bate o limite de uso
+
+Um card parado em ANALISE ou DESENVOLVIMENTO com a nota *"aguardando o limite de
+uso da IA reabrir"* no histórico **não é falha**: o provedor respondeu `429`, e a
+esteira agendou a retomada em vez de mandar o card pra ERRO. Ela tenta de novo
+sozinha, respeitando o `retry-after` da resposta (1 a 15 min, até 20 vezes), e
+segue de onde parou. Em Configurações → Recursos, o contador **Aguardando cota**
+mostra quantos jobs estão nessa situação.
+
+Com **chave de API** o 429 é raro (cota pré-paga, baldes por minuto); o que
+aparece nesse caminho é o `400 credit balance is too low`, que **não** é
+transitório e vai pra ERRO na hora, porque só sai do lugar comprando crédito.
+
+### O 429 que não é limite de uso
+
+Existe um segundo 429, e ele é uma armadilha: status 429, mensagem esvaziada
+(`"message":"Error"`) e **nenhum** header `anthropic-ratelimit-*` nem
+`retry-after`. Esse não é cota — é recusa de permissão. A chamada é barrada
+antes de ser contabilizada, e o `/usage` da conta continua marcando 0%.
+
+Foi o que aconteceu em 2026-08-31 com o **token OAuth da conta corporativa**: ele
+autentica e resolve a organização (a resposta traz `anthropic-organization-id`),
+mas não tem direito de chamar `/v1/messages` fora do Claude Code. Esperar não
+adianta, porque não há janela reabrindo.
+
+A esteira separa os dois pela presença dos headers de cota: com eles, espera;
+sem eles, vai pra ERRO na hora com uma mensagem dizendo o que trocar. Na
+prática, **para esta plataforma use chave de API** (`sk-ant-api...`) — o token
+OAuth só serve ao Claude Code em si.
+
+Só depois de 20 esperas o card vai pra ERRO — aí não é mais janela de cota, e
+vale olhar o consumo em Configurações → Recursos.
+
 ### Acessar de outra máquina
 
 O endereço da API é embutido no build do frontend. Para acessar de outro
@@ -292,10 +342,17 @@ docker compose up -d db trace-api    # infra
 cd smart-ai-flow && npm install && npm run dev     # backend  :3333
 cd pb-insight    && npm install && npm run serve   # RAG      :4500
 cd web           && npm install && npm run dev     # front    :3000
+cd app_trace     && go run .                       # trace    :8070
 ```
 
 Neste modo cada projeto usa o próprio `.env` (veja os `.env.example`), e o
 backend precisa de `DATABASE_URL`, `JWT_SECRET` e `ENCRYPTION_KEY`.
+
+**A porta também é de lá**: o `PORT` do `.env` de cada pasta é o que vale
+rodando fora do Docker. As portas do `.env` da raiz servem só à stack Docker —
+o Compose precisa do valor dele mesmo para montar o mapeamento e não consegue
+ler os arquivos das subpastas. Trocar uma porta pede as duas pontas, e o `web`
+ainda pede que `NEXT_PUBLIC_API_URL` aponte para a porta do backend.
 
 ```bash
 cd smart-ai-flow && npm test         # testes do domínio

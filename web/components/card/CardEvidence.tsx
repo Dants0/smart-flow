@@ -234,7 +234,9 @@ export function CardEvidence({ card }: { card: Card }) {
               )}
               <span className="text-zinc-500">
                 <span className="font-medium text-zinc-700 dark:text-zinc-300">
-                  {h.from} → {h.to}
+                  {/* from === to = anotação sem troca de estágio (ex: espera por cota da IA).
+                      Renderizar "ANALISE → ANALISE" ali sugeriria um ciclo que não houve. */}
+                  {h.from === h.to ? h.from : `${h.from} → ${h.to}`}
                 </span>{" "}
                 {h.userName && (
                   <span className="text-zinc-600 dark:text-zinc-400">por {h.userName} </span>

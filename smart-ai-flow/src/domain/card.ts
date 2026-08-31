@@ -123,6 +123,50 @@ export function moveCard(
   };
 }
 
+/**
+ * Registra um acontecimento SEM trocar de estágio.
+ *
+ * Existe por causa da espera por limite de uso da IA: o card continua em
+ * ANALISE/DESENVOLVIMENTO (é onde ele de fato está), mas alguém precisa
+ * conseguir ver na tela por que nada acontece há dez minutos. Sem isso o card
+ * parece travado, que era exatamente a confusão que ERRO evitava — ao custo de
+ * exigir um clique humano pra retomar.
+ *
+ * Não passa por `assertTransition`: ANALISE -> ANALISE não é transição, e
+ * declará-la válida abriria a porta pra laço de estágio no orquestrador.
+ */
+export function noteOnCard(
+  card: Card,
+  note: string,
+  by: 'IA' | 'DEV' = 'IA',
+  /**
+   * Prefixo que identifica uma nota RECORRENTE: se a última entrada do histórico
+   * já começa com ele, esta substitui aquela em vez de virar linha nova.
+   *
+   * Existe porque a primeira versão gravava a espera por cota uma vez só, e a
+   * linha envelhecia na tela: depois de 50 minutos o card ainda dizia "nova
+   * tentativa em 1 min". Uma nota que mente é pior que nenhuma. Vinte linhas
+   * iguais também não servem — daí substituir, não acumular.
+   */
+  substituiPrefixo?: string,
+): Card {
+  const now = new Date().toISOString();
+  const anterior = card.history[card.history.length - 1];
+  const substitui =
+    substituiPrefixo !== undefined &&
+    anterior !== undefined &&
+    anterior.from === anterior.to &&
+    (anterior.note ?? '').startsWith(substituiPrefixo);
+
+  const base = substitui ? card.history.slice(0, -1) : card.history;
+
+  return {
+    ...card,
+    updatedAt: now,
+    history: [...base, { from: card.stage, to: card.stage, by, at: now, note }],
+  };
+}
+
 /** Verdadeiro se o próximo passo é humano (card travado esperando o dev). */
 export function isWaitingOnDev(card: Card): boolean {
   return OWNER[card.stage] === 'DEV' && card.stage !== Stage.RESOLVIDO;

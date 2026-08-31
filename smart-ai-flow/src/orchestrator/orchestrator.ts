@@ -1,6 +1,7 @@
 import { Stage, isAutomatic } from '../domain/stages';
 import { moveCard, type Card } from '../domain/card';
 import { AgentOutputError } from '../agents/contracts';
+import { TransientLlmError } from '../infra/llmErrors';
 import { runAnalysis } from '../agents/analyzer';
 import { runProposal } from '../agents/proposer';
 import { analyzeTraces, type TraceProviderOverride } from '../infra/traceService';
@@ -50,6 +51,19 @@ export async function advance(
         outputTokens: usage?.outputTokens,
         errorMessage: message + raw,
       });
+
+      /*
+       * Falha transitória do provedor (429 de limite de uso, 5xx, conexão) NÃO
+       * é exceção do card: ela passa sozinha. Propaga pra fila, que sabe esperar
+       * o tempo certo e retomar deste mesmo estágio.
+       *
+       * Mandar isso pra ERRO era o pior dos mundos: a esteira parava por um
+       * motivo que se resolveria em minutos e exigia um humano pra destravar —
+       * o oposto do que a esteira existe pra fazer. A auditoria em Run acima já
+       * ficou gravada de qualquer jeito, com os headers de cota junto.
+       */
+      if (err instanceof TransientLlmError) throw err;
+
       current = moveCard(current, Stage.ERRO, 'IA', message);
       await persist(current);
       break;

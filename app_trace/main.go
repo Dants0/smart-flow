@@ -9,6 +9,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -17,13 +18,30 @@ import (
 	"github.com/joho/godotenv"
 )
 
+// listenAddr aceita a porta em qualquer das formas que aparecem no .env —
+// "8070", ":8070" ou vazio — e devolve o que o gin espera (":porta").
+//
+// O gin exige o dois-pontos, e quem esquece dele não recebe erro: cai no
+// default :8080, e o backend passa a ver o serviço como OFFLINE sem pista do
+// motivo. Trocar a porta no .env é justamente o que outro dev vai querer fazer.
+func listenAddr(porta string) string {
+	porta = strings.TrimSpace(porta)
+	if porta == "" {
+		return ":8070"
+	}
+	if !strings.HasPrefix(porta, ":") {
+		return ":" + porta
+	}
+	return porta
+}
+
 func main() {
 	err := godotenv.Load()
 	if err != nil {
 		log.Println("Aviso: .env não encontrado, usando variáveis de ambiente do sistema")
 	}
 
-	port := os.Getenv("PORT")
+	port := listenAddr(os.Getenv("PORT"))
 
 	r := gin.Default()
 

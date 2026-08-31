@@ -6,6 +6,7 @@ describe('anthropicClientOptions', () => {
     expect(anthropicClientOptions('apiKey', 'sk-ant-api-123')).toEqual({
       apiKey: 'sk-ant-api-123',
       authToken: null,
+      maxRetries: 3,
     });
   });
 
@@ -16,6 +17,7 @@ describe('anthropicClientOptions', () => {
       apiKey: null,
       authToken: 'sk-ant-oat-abc',
       defaultHeaders: { 'anthropic-beta': 'oauth-2025-04-20' },
+      maxRetries: 3,
     });
   });
 
@@ -35,5 +37,15 @@ describe('anthropicClientOptions', () => {
 
   it('a chave não leva o beta de OAuth junto', () => {
     expect(anthropicClientOptions('apiKey', 'sk').defaultHeaders).toBeUndefined();
+  });
+});
+
+describe('retentativa do SDK', () => {
+  it('sobe de 2 (default) pra 3, nos dois tipos de credencial', () => {
+    // Cobre soluço de segundos e nada além disso: o SDK ignora `retry-after`
+    // maior que 60s, então a janela de cota da assinatura passa batido aqui e
+    // é a fila que espera (ver jobQueue.ts).
+    expect(anthropicClientOptions('apiKey', 'sk').maxRetries).toBe(3);
+    expect(anthropicClientOptions('oauth', 'tok').maxRetries).toBe(3);
   });
 });

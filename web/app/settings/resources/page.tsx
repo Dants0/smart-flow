@@ -106,11 +106,16 @@ export default function ResourcesPage() {
           <SettingsSection
             icon={LuListChecks}
             title="Fila de processamento"
-            description="Os estágios de IA rodam fora do request. Job travado vira ERRO no card após 3 tentativas, e job órfão (backend caiu no meio) volta pra fila no próximo start."
+            description="Os estágios de IA rodam fora do request. Limite de uso do provedor não vira ERRO: o job espera a cota reabrir e retoma sozinho. Job travado por falha real vira ERRO no card após 3 tentativas, e job órfão (backend caiu no meio) volta pra fila no próximo start."
           >
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
               <Stat label="Na fila" value={String(data.queue.pending)} />
               <Stat label="Processando" value={String(data.queue.running)} />
+              <Stat
+                label="Aguardando cota"
+                value={String(data.queue.waiting)}
+                hint={data.queue.waiting > 0 ? "limite de uso da IA, retoma sozinho" : undefined}
+              />
               <Stat
                 label="Falharam"
                 value={String(data.queue.failed)}

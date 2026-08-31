@@ -4,6 +4,11 @@
 #   2. docker compose up -d --build
 #   3. abra http://localhost:3000 e crie o usuário administrador
 #
+# As portas de todos os serviços vêm do .env da raiz (seção "Portas"): cada uma
+# vale ao mesmo tempo para o processo dentro do container e para o que é
+# publicado no host, então trocar lá basta. Os defaults abaixo são os valores de
+# fábrica, para o compose subir mesmo com um .env antigo, sem a seção.
+#
 # Ver README.md para o passo a passo e para a ingestão do PB Insight.
 services:
   db:
@@ -14,6 +19,10 @@ services:
       POSTGRES_DB: smart_ai_flow
     volumes:
       - pgdata:/var/lib/postgresql/data
+    ports:
+      # Só o lado do host é variável: dentro da rede do compose o Postgres é
+      # sempre db:5432, e mudar isso quebraria a DATABASE_URL dos serviços.
+      - "${DB_PORT:-5432}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U smart -d smart_ai_flow"]
       interval: 5s
@@ -27,14 +36,14 @@ services:
       # O host é `db`, não localhost: dentro da rede do compose cada serviço
       # é alcançável pelo próprio nome.
       DATABASE_URL: postgresql://smart:smart@db:5432/smart_ai_flow
-      PORT: 3333
+      PORT: ${BACKEND_PORT:-3333}
       JWT_SECRET: ${JWT_SECRET:?defina JWT_SECRET no .env — rode o setup}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY:?defina ENCRYPTION_KEY no .env — rode o setup}
       # Mesma regra do banco: dentro da rede do compose cada microserviço é
       # alcançável pelo nome do serviço. `localhost` aqui apontaria pro próprio
       # container do backend — era o que deixava os dois OFFLINE no monitor.
-      TRACE_SERVICE_URL: ${TRACE_SERVICE_URL:-http://trace-api:8070}
-      PB_INSIGHT_URL: ${PB_INSIGHT_URL:-http://pb-insight:4500}
+      TRACE_SERVICE_URL: ${TRACE_SERVICE_URL:-http://trace-api:${TRACE_PORT:-8070}}
+      PB_INSIGHT_URL: ${PB_INSIGHT_URL:-http://pb-insight:${PB_INSIGHT_PORT:-4500}}
       # Working copy do SMART Desktop, montado abaixo. É o que habilita o botão
       # "aplicar diff no código" em REVISAO — sem isso a esteira roda igual, só
       # que o dev aplica o diff na mão, como antes.
@@ -52,7 +61,7 @@ services:
       # Backup dos arquivos antes de cada apply — é o que permite reverter pela UI.
       - applied_backups:/app/.backups
     ports:
-      - "3333:3333"
+      - "${BACKEND_PORT:-3333}:${BACKEND_PORT:-3333}"
     depends_on:
       db:
         condition: service_healthy
@@ -69,9 +78,13 @@ services:
         # Embutido no bundle em tempo de build. `localhost` funciona porque o
         # navegador roda na mesma máquina que os containers. Para acessar de
         # outro computador, troque pelo IP desta máquina e refaça o build.
-        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:3333}
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:${BACKEND_PORT:-3333}}
+    environment:
+      # O server.js do build standalone do Next lê PORT. Sem isto ele escutaria
+      # 3000 dentro do container e o mapeamento apontaria pro vazio.
+      PORT: ${WEB_PORT:-3000}
     ports:
-      - "3000:3000"
+      - "${WEB_PORT:-3000}:${WEB_PORT:-3000}"
     depends_on:
       - backend
     restart: unless-stopped
@@ -81,13 +94,13 @@ services:
   trace-api:
     build: ./app_trace
     environment:
-      PORT: ":8070"
+      PORT: ${TRACE_PORT:-8070}
       # Chave opcional: o backend manda a credencial da Anthropic na requisição
       # (chave de API ou token OAuth, ver Configurações > IA), então nada de
       # Anthropic precisa subir aqui.
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
     ports:
-      - "8070:8070"
+      - "${TRACE_PORT:-8070}:${TRACE_PORT:-8070}"
     restart: unless-stopped
 
   # RAG sobre o codebase PowerBuilder. Precisa do grafo indexado — ver README,
@@ -96,7 +109,7 @@ services:
   pb-insight:
     build: ./pb-insight
     environment:
-      PORT: 4500
+      PORT: ${PB_INSIGHT_PORT:-4500}
       HOST: 0.0.0.0
       PB_INSIGHT_WS_ROOT: /smart_desktop/ws_objects
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
@@ -109,7 +122,7 @@ services:
       # a máquina não tem o repo, e aí o ingest simplesmente não acha nada.
       - ${SMART_DESKTOP_PATH:-./.empty}:/smart_desktop:ro
     ports:
-      - "4500:4500"
+      - "${PB_INSIGHT_PORT:-4500}:${PB_INSIGHT_PORT:-4500}"
     restart: unless-stopped
 
 volumes:

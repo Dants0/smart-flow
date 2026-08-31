@@ -60,6 +60,7 @@ solicitação, criado ao final do atendimento.
 | [2026-08-28-01](2026-08-28-01-url-base-do-jira-com-barra.md) | A barra no fim da URL do Jira, e a tela que não deixava consertá-la |
 | [2026-08-28-02](2026-08-28-02-credencial-oauth-da-anthropic.md) | Anthropic: aceitar chave de API **ou** token OAuth corporativo |
 | [2026-08-28-03](2026-08-28-03-recuperar-senha-da-plataforma.md) | Recuperar a senha da plataforma — versão provisória, sem autenticação |
+| [2026-08-31-01](2026-08-31-01-limite-de-uso-nao-e-erro-e-portas-no-env.md) | O 429 que virava ERRO, e as portas fora do .env |
 
 ## Template
 

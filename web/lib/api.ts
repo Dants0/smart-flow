@@ -323,6 +323,8 @@ export interface QueueStats {
   pending: number;
   running: number;
   failed: number;
+  /** PENDING com hora marcada no futuro: esperando a cota da IA reabrir. */
+  waiting: number;
 }
 
 export interface UsageSummary {

@@ -40,6 +40,21 @@ Duas paradas antecipadas, ambas deliberadas:
   Configurações → IA). A da Anthropic é chave de API **ou** token OAuth
   (`CLAUDE_CODE_OAUTH_TOKEN`, o que a conta corporativa emite) — headers
   diferentes, o tipo é escolhido na tela. Todo consumo vira linha em `Run`.
+  **Na prática, use chave de API**: medido em 2026-08-31, o token OAuth da conta
+  Team autentica (a resposta traz `anthropic-organization-id`) mas a chamada a
+  `/v1/messages` volta 429 sem header de cota nenhum e sem contabilizar consumo
+  — é recusa de permissão, não limite. O seletor OAuth continua na tela porque a
+  restrição é da conta, não do código.
+- **Nem todo 429 é limite de uso.** 429 **com** headers `anthropic-ratelimit-*`
+  é cota e vira espera; 429 **sem nenhum** deles é recusa de permissão disfarçada
+  e vai pra ERRO na hora (`ehRecusaDisfarcadaDe429`). Sem essa distinção a
+  esteira esperava 20 vezes, ~3h, contra uma janela que nunca ia reabrir.
+- **Limite de uso não é exceção do card.** `429`, `5xx` e queda de conexão viram
+  `TransientLlmError` (`infra/llmErrors.ts`) e a fila reagenda o job respeitando o
+  `retry-after`, com o card parado no estágio em que estava. Só falha definitiva
+  (credencial inválida, saldo zerado, JSON que não parseia) vai pra ERRO. Com
+  token OAuth a cota é a da assinatura — a mesma do Claude Code do dev — então
+  bater o teto é rotina, e rotina não pode exigir clique humano.
 - Contexto da IA = `CLAUDE.md` do sistema + **código real do repositório, nos
   dois estágios** + inventário de reuso (`git grep`) + RAG do PB Insight + skill
   do time (Configurações → IA) + o chamado.
@@ -66,17 +81,18 @@ src/
   agents/        contracts.ts (Zod + parser tolerante) · analyzer.ts
                  proposer.ts · jsonCall.ts (retentativa dirigida)
   orchestrator/  orchestrator.ts (roda os estágios de IA, audita em Run)
-  infra/         llm.ts · pbInsight.ts · traceService.ts · jiraService.ts
+  infra/         llm.ts · llmErrors.ts (429 vira espera, não ERRO)
+                 pbInsight.ts · traceService.ts · jiraService.ts
                  repos.ts (os dois repositórios) · workspace.ts (aplica diff)
                  git.ts · bitbucket.ts · objectIndex.ts (arquivos que existem)
-                 monitor.ts · jobQueue.ts · crypto.ts · costs.ts
+                 monitor.ts · jobQueue.ts (espera agendada) · crypto.ts · costs.ts
                  *Repository.ts (Prisma)
   http/          routes.ts (Fastify) · schemas.ts (Zod)
                  jsonBodyParser.ts (corpo vazio com content-type json)
 modules/         briefing por sistema/módulo do cliente
   smartdesktop/  atende/ agenda/ mwsus/ cadgf/ pacdel/ cirurg/  smartweb/
 prisma/          User · Card · History · Run · Job · PlatformSettings
-tests/           vitest (151 testes)
+tests/           vitest (193 testes)
 ```
 
 ## Os dois repositórios do cliente
@@ -157,8 +173,10 @@ npm test           # vitest
 npm run typecheck
 ```
 
-Precisa de `DATABASE_URL`, `JWT_SECRET` e `ENCRYPTION_KEY` no `.env`. O resto da
-configuração vive no banco, editável pela tela, valendo na hora.
+Precisa de `DATABASE_URL`, `JWT_SECRET` e `ENCRYPTION_KEY` no `.env`, e é de lá
+que sai o `PORT` fora do Docker (dentro dele, quem manda é `BACKEND_PORT` no
+`.env` da raiz). O resto da configuração vive no banco, editável pela tela,
+valendo na hora.
 
 ## Ao mexer aqui
 

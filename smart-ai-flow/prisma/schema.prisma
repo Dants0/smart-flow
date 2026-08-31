@@ -165,10 +165,22 @@ model Job {
   lastError String?
   payload   Json? // TraceProviderOverride, quando o dev usou chave pessoal
 
+  // Antes de quando o worker não deve nem olhar pra este job. Null = agora.
+  // É o que permite esperar a janela de limite de uso da IA reabrir sem ocupar
+  // o worker num laço de 2s contra uma API que só vai responder 429 de novo.
+  availableAt DateTime?
+
+  // Esperas por limite de uso, contadas SEPARADAMENTE de `attempts`. As duas
+  // coisas não se misturam: `attempts` é orçamento pra falha de verdade (3 e
+  // acabou), enquanto adiar por cota não é tentativa gasta — se contasse junto,
+  // três 429 seguidos mandariam pra ERRO um card que só precisava esperar.
+  deferrals Int @default(0)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([status, createdAt])
+  @@index([status, availableAt, createdAt])
 }
 
 // Configuração da plataforma — linha única (id sempre 1), editável pela tela
