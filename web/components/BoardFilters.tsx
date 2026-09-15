@@ -15,12 +15,18 @@ export function BoardFilters({
   filters,
   modules,
   onChange,
+  showMine,
 }: {
   filters: CardFilters;
   modules: string[];
   onChange: (next: CardFilters) => void;
+  /**
+   * Só o admin vê o botão "Meus cards": o board do dev já é só dele, e um
+   * filtro que nunca muda nada na tela só faz duvidar do que está sendo visto.
+   */
+  showMine: boolean;
 }) {
-  const active = !!(filters.search || filters.module || filters.mine);
+  const active = !!(filters.search || filters.module || (showMine && filters.mine));
 
   return (
     <div className="flex flex-wrap items-center gap-2 border-b border-zinc-200 bg-white px-6 py-2.5 dark:border-zinc-800 dark:bg-zinc-950">
@@ -62,16 +68,18 @@ export function BoardFilters({
         ))}
       </select>
 
-      <button
-        onClick={() => onChange({ ...filters, mine: filters.mine ? undefined : true })}
-        className={`rounded-md border px-2.5 py-1.5 text-sm font-medium transition ${
-          filters.mine
-            ? "border-zinc-900 bg-zinc-900 text-white dark:border-white dark:bg-white dark:text-zinc-900"
-            : "border-zinc-300 text-zinc-600 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900"
-        }`}
-      >
-        Meus cards
-      </button>
+      {showMine && (
+        <button
+          onClick={() => onChange({ ...filters, mine: filters.mine ? undefined : true })}
+          className={`rounded-md border px-2.5 py-1.5 text-sm font-medium transition ${
+            filters.mine
+              ? "border-zinc-900 bg-zinc-900 text-white dark:border-white dark:bg-white dark:text-zinc-900"
+              : "border-zinc-300 text-zinc-600 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900"
+          }`}
+        >
+          Meus cards
+        </button>
+      )}
 
       {active && (
         <button

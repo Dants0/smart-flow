@@ -165,9 +165,18 @@ export async function findCardSummaries(filters: CardFilters = {}): Promise<Card
   }));
 }
 
-/** Módulos que de fato têm card — alimenta o seletor de filtro. */
-export async function findUsedModules(): Promise<string[]> {
-  const rows = await prisma.card.findMany({ distinct: ['module'], select: { module: true } });
+/**
+ * Módulos que de fato têm card — alimenta o seletor de filtro.
+ *
+ * `createdById` recorta pelo dono, igual ao board: sem isso o seletor listava
+ * sistema em que o dev não tem card nenhum, e o vazamento reaparecia ali.
+ */
+export async function findUsedModules(createdById?: string): Promise<string[]> {
+  const rows = await prisma.card.findMany({
+    where: createdById ? { createdById } : {},
+    distinct: ['module'],
+    select: { module: true },
+  });
   return rows.map((r) => r.module).sort();
 }
 
@@ -179,9 +188,16 @@ export async function findCardById(id: string): Promise<Card | null> {
   return row ? toDomain(row) : null;
 }
 
-/** Só as jiraKeys já viradas card — usado pra filtrar o aviso de "atribuído a você". */
-export async function findAllJiraKeys(): Promise<string[]> {
-  const rows = await prisma.card.findMany({ select: { jiraKey: true } });
+/**
+ * Só as jiraKeys já viradas card — usado pra filtrar o aviso de "atribuído a
+ * você". Com `createdById` a conta é a do próprio dev: card de outra pessoa não
+ * pode apagar um aviso que só ele vê.
+ */
+export async function findAllJiraKeys(createdById?: string): Promise<string[]> {
+  const rows = await prisma.card.findMany({
+    where: createdById ? { createdById } : {},
+    select: { jiraKey: true },
+  });
   return rows.map((r) => r.jiraKey);
 }
 

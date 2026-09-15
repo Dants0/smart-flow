@@ -283,7 +283,12 @@ function Board({ user }: { user: AuthUser }) {
         </div>
       )}
 
-      <BoardFilters filters={filters} modules={modules} onChange={setFilters} />
+      <BoardFilters
+        filters={filters}
+        modules={modules}
+        onChange={setFilters}
+        showMine={user.isAdmin}
+      />
 
       <main className="flex flex-1 gap-4 overflow-x-auto p-6">
         {loading ? (

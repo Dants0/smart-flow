@@ -1,7 +1,8 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { createCard, moveCard } from '../domain/card';
+import { createCard, moveCard, type Card } from '../domain/card';
+import { podeVerCard, recorteDeDono, type Viewer } from '../domain/cardVisibility';
 import { Stage } from '../domain/stages';
 import { buildJiraComment } from '../domain/jiraComment';
 import { answerCardQuestion } from '../agents/chat';
@@ -94,6 +95,35 @@ function parseBody<T>(schema: z.ZodType<T>, req: FastifyRequest, reply: FastifyR
 
 function currentUserId(req: FastifyRequest): string {
   return (req.user as { sub: string }).sub;
+}
+
+/**
+ * Quem está pedindo, e com que alcance. A regra de quem vê o quê mora em
+ * `domain/cardVisibility`.
+ */
+async function viewerOf(req: FastifyRequest): Promise<Viewer> {
+  const id = currentUserId(req);
+  const me = await findUserById(id);
+  return { id, isAdmin: !!me?.isAdmin };
+}
+
+/**
+ * Carrega o card de :id conferindo que ele é de quem pediu, e é por onde passa
+ * TODA rota de card — listar filtrado não basta, porque o id viaja na URL e quem
+ * tiver um id de outro dev chega direto no recurso.
+ *
+ * Responde **404, e não 403**, de propósito: para quem não é dono o card não
+ * existe, e um 403 confirmaria que aquele id existe — dá pra varrer a esteira
+ * alheia só com a diferença entre as duas respostas.
+ */
+async function loadVisibleCard(req: FastifyRequest, reply: FastifyReply): Promise<Card | null> {
+  const id = (req.params as { id: string }).id;
+  const [card, viewer] = await Promise.all([findCardById(id), viewerOf(req)]);
+  if (!card || !podeVerCard(card, viewer)) {
+    reply.code(404).send({ error: 'não encontrado' });
+    return null;
+  }
+  return card;
 }
 
 export async function routes(app: FastifyInstance) {
@@ -223,10 +253,17 @@ export async function routes(app: FastifyInstance) {
         resolvedWithinDays?: string;
       };
 
+      const viewer = await viewerOf(req);
+
       const filters: CardFilters = {};
       if (q.search?.trim()) filters.search = q.search.trim();
       if (q.module) filters.module = q.module;
-      if (q.mine === 'true') filters.createdById = currentUserId(req);
+
+      // O recorte por dono é do servidor, não da tela: para o dev ele é a regra
+      // e não há como desligar. `mine` sobrevive só para o admin, que enxerga a
+      // esteira inteira e usa o botão para achar os próprios cards.
+      const dono = recorteDeDono(viewer, q.mine === 'true');
+      if (dono) filters.createdById = dono;
 
       const days = Number(q.resolvedWithinDays);
       if (Number.isFinite(days) && days > 0) filters.resolvedWithinDays = days;
@@ -235,7 +272,12 @@ export async function routes(app: FastifyInstance) {
     });
 
     /** Módulos que têm card — popula o seletor de filtro sem hardcode na UI. */
-    secured.get('/cards/modules', async () => findUsedModules());
+    secured.get('/cards/modules', async (req) => {
+      const viewer = await viewerOf(req);
+      // Mesmo recorte do board: o seletor não pode revelar que existe card de um
+      // sistema em que o dev não tem card nenhum.
+      return findUsedModules(recorteDeDono(viewer, false));
+    });
 
     /**
      * NOVO: dev cola o chamado. Enfileira o pipeline e responde na hora — quem
@@ -263,8 +305,8 @@ export async function routes(app: FastifyInstance) {
     });
 
     secured.get('/cards/:id', async (req, reply) => {
-      const card = await findCardById((req.params as { id: string }).id);
-      if (!card) return reply.code(404).send({ error: 'não encontrado' });
+      const card = await loadVisibleCard(req, reply);
+      if (!card) return;
       return card;
     });
 
@@ -273,8 +315,8 @@ export async function routes(app: FastifyInstance) {
       const body = parseBody(ResolveCardSchema, req, reply);
       if (!body) return;
 
-      const card = await findCardById((req.params as { id: string }).id);
-      if (!card) return reply.code(404).send({ error: 'não encontrado' });
+      const card = await loadVisibleCard(req, reply);
+      if (!card) return;
 
       const resolved = resolve(card, body.note, body.resolutionText, currentUserId(req));
       await saveCard(resolved);
@@ -288,8 +330,8 @@ export async function routes(app: FastifyInstance) {
       const body = parseBody(RejectCardSchema, req, reply);
       if (!body) return;
 
-      const card = await findCardById((req.params as { id: string }).id);
-      if (!card) return reply.code(404).send({ error: 'não encontrado' });
+      const card = await loadVisibleCard(req, reply);
+      if (!card) return;
 
       const next = requestNewProposal(card, body.note ?? 'diff rejeitado', currentUserId(req));
       await saveCard(next);
@@ -303,8 +345,8 @@ export async function routes(app: FastifyInstance) {
      * Não commita nada: a mudança aparece como alteração local no working copy do dev.
      */
     secured.post('/cards/:id/apply', async (req, reply) => {
-      const card = await findCardById((req.params as { id: string }).id);
-      if (!card) return reply.code(404).send({ error: 'não encontrado' });
+      const card = await loadVisibleCard(req, reply);
+      if (!card) return;
       if (card.stage !== 'REVISAO') {
         return reply.code(400).send({ error: 'só dá pra aplicar o diff em REVISAO' });
       }
@@ -344,8 +386,8 @@ export async function routes(app: FastifyInstance) {
 
     /** Desfaz o apply pelo backup. O card continua em REVISAO, como antes. */
     secured.post('/cards/:id/revert', async (req, reply) => {
-      const card = await findCardById((req.params as { id: string }).id);
-      if (!card) return reply.code(404).send({ error: 'não encontrado' });
+      const card = await loadVisibleCard(req, reply);
+      if (!card) return;
       if (!card.appliedAt || !card.appliedBackupDir || !card.appliedFiles?.length) {
         return reply.code(400).send({ error: 'este card não tem alteração aplicada' });
       }
@@ -393,8 +435,8 @@ export async function routes(app: FastifyInstance) {
      *    com o erro na tela, em vez de ir pra versionamento sem código aplicado.
      */
     secured.post('/cards/:id/accept', async (req, reply) => {
-      const card = await findCardById((req.params as { id: string }).id);
-      if (!card) return reply.code(404).send({ error: 'não encontrado' });
+      const card = await loadVisibleCard(req, reply);
+      if (!card) return;
       if (card.stage !== 'REVISAO') {
         return reply.code(400).send({ error: 'só dá pra aceitar a partir de REVISAO' });
       }
@@ -441,7 +483,11 @@ export async function routes(app: FastifyInstance) {
 
     // ---- Chat de dúvidas sobre o card -----------------------------------
 
-    secured.get('/cards/:id/chat', async (req) => listChat((req.params as { id: string }).id));
+    secured.get('/cards/:id/chat', async (req, reply) => {
+      const card = await loadVisibleCard(req, reply);
+      if (!card) return;
+      return listChat(card.id);
+    });
 
     /**
      * Pergunta pontual sobre a resolução. Contexto = o card inteiro + código
@@ -453,8 +499,8 @@ export async function routes(app: FastifyInstance) {
       if (!body) return;
 
       const id = (req.params as { id: string }).id;
-      const card = await findCardById(id);
-      if (!card) return reply.code(404).send({ error: 'não encontrado' });
+      const card = await loadVisibleCard(req, reply);
+      if (!card) return;
 
       const userId = currentUserId(req);
       await appendChat({ cardId: id, role: 'user', content: body.content, userId });
@@ -495,8 +541,8 @@ export async function routes(app: FastifyInstance) {
      * sem saber o que sobe, que é exatamente o que essa etapa evita.
      */
     secured.get('/cards/:id/versioning', async (req, reply) => {
-      const card = await findCardById((req.params as { id: string }).id);
-      if (!card) return reply.code(404).send({ error: 'não encontrado' });
+      const card = await loadVisibleCard(req, reply);
+      if (!card) return;
       if (!card.appliedFiles?.length) {
         return reply.code(400).send({ error: 'o diff ainda não foi aplicado neste card' });
       }
@@ -516,10 +562,10 @@ export async function routes(app: FastifyInstance) {
 
       const userId = currentUserId(req);
       const [card, identity] = await Promise.all([
-        findCardById((req.params as { id: string }).id),
+        loadVisibleCard(req, reply),
         getGitIdentity(userId),
       ]);
-      if (!card) return reply.code(404).send({ error: 'não encontrado' });
+      if (!card) return;
       if (card.stage !== 'VERSIONAMENTO' && card.stage !== 'REVISAO') {
         return reply.code(400).send({ error: 'o card não está em versionamento' });
       }
@@ -580,10 +626,10 @@ export async function routes(app: FastifyInstance) {
     secured.post('/cards/:id/pull-request', async (req, reply) => {
       const userId = currentUserId(req);
       const [card, creds] = await Promise.all([
-        findCardById((req.params as { id: string }).id),
+        loadVisibleCard(req, reply),
         getBitbucketCredentials(userId),
       ]);
-      if (!card) return reply.code(404).send({ error: 'não encontrado' });
+      if (!card) return;
       if (!card.commitHash) return reply.code(400).send({ error: 'não há commit para publicar' });
       if (!creds) {
         return reply.code(428).send({
@@ -646,8 +692,8 @@ export async function routes(app: FastifyInstance) {
 
     /** Rascunho do comentário de entrega — o dev edita antes de publicar. */
     secured.get('/cards/:id/jira-comment', async (req, reply) => {
-      const card = await findCardById((req.params as { id: string }).id);
-      if (!card) return reply.code(404).send({ error: 'não encontrado' });
+      const card = await loadVisibleCard(req, reply);
+      if (!card) return;
       return {
         body: buildJiraComment({
           card,
@@ -662,8 +708,8 @@ export async function routes(app: FastifyInstance) {
       const body = parseBody(JiraCommentSchema, req, reply);
       if (!body) return;
 
-      const card = await findCardById((req.params as { id: string }).id);
-      if (!card) return reply.code(404).send({ error: 'não encontrado' });
+      const card = await loadVisibleCard(req, reply);
+      if (!card) return;
 
       try {
         await addJiraComment(currentUserId(req), card.jiraKey, body.body);
@@ -699,8 +745,8 @@ export async function routes(app: FastifyInstance) {
       const body = parseBody(RetryCardSchema, req, reply);
       if (!body) return;
 
-      const card = await findCardById((req.params as { id: string }).id);
-      if (!card) return reply.code(404).send({ error: 'não encontrado' });
+      const card = await loadVisibleCard(req, reply);
+      if (!card) return;
       if (card.stage !== 'ERRO') {
         return reply.code(400).send({ error: 'só é possível reprocessar cards em ERRO' });
       }
@@ -711,18 +757,16 @@ export async function routes(app: FastifyInstance) {
       return next;
     });
 
-    /** Apagar é destrutivo e leva histórico e runs junto: só o autor ou um admin. */
+    /**
+     * Apagar é destrutivo e leva histórico e runs junto. A regra continua "só o
+     * autor ou um admin" — só que agora ela é a MESMA da visibilidade, então quem
+     * chega aqui já passou por ela em `loadVisibleCard`.
+     */
     secured.delete('/cards/:id', async (req, reply) => {
-      const id = (req.params as { id: string }).id;
-      const [card, me] = await Promise.all([findCardById(id), findUserById(currentUserId(req))]);
-      if (!card) return reply.code(404).send({ error: 'não encontrado' });
+      const card = await loadVisibleCard(req, reply);
+      if (!card) return;
 
-      const isOwner = card.createdById && card.createdById === me?.id;
-      if (!isOwner && !me?.isAdmin) {
-        return reply.code(403).send({ error: 'só quem criou o card (ou um admin) pode apagá-lo' });
-      }
-
-      await deleteCardRow(id);
+      await deleteCardRow(card.id);
       return reply.code(204).send();
     });
 
@@ -746,7 +790,10 @@ export async function routes(app: FastifyInstance) {
       try {
         const [assigned, knownKeys] = await Promise.all([
           searchAssignedIssues(userId),
-          findAllJiraKeys().then((keys) => new Set(keys)),
+          // Só os cards que ESTE dev enxerga: se o aviso sumisse porque outra
+          // pessoa abriu card do mesmo chamado, ele perderia o chamado sem nunca
+          // saber por quê.
+          findAllJiraKeys(me?.isAdmin ? undefined : userId).then((keys) => new Set(keys)),
         ]);
         // Único filtro local: o que já virou card. Não existe dispensar — o
         // aviso espelha o Jira, e é lá que o chamado deixa de ser seu.
