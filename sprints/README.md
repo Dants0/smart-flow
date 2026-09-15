@@ -62,6 +62,7 @@ solicitação, criado ao final do atendimento.
 | [2026-08-28-03](2026-08-28-03-recuperar-senha-da-plataforma.md) | Recuperar a senha da plataforma — versão provisória, sem autenticação |
 | [2026-08-31-01](2026-08-31-01-limite-de-uso-nao-e-erro-e-portas-no-env.md) | O 429 que virava ERRO, e as portas fora do .env |
 | [2026-09-14-01](2026-09-14-01-board-pessoal-cards-vazavam-entre-usuarios.md) | O board era de todo mundo: cards vazavam entre usuários |
+| [2026-09-15-01](2026-09-15-01-backend-nao-alcancava-o-banco.md) | O backend não alcançava o banco: o container do Postgres ficou fora da rede |
 
 ## Template
 

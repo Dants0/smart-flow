@@ -1,0 +1,5 @@
+# core.autocrlf=true converteria o entrypoint do container para CRLF no
+# checkout, e aí o Linux leria o shebang como `/bin/sh\r` e o container nem
+# subiria. Scripts de container ficam sempre em LF.
+*.sh text eol=lf
+*.mjs text eol=lf

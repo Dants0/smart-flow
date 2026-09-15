@@ -24,10 +24,15 @@ services:
       # sempre db:5432, e mudar isso quebraria a DATABASE_URL dos serviços.
       - "${DB_PORT:-5432}:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U smart -d smart_ai_flow"]
+      # -h 127.0.0.1 de propósito: sem isso o pg_isready testa o socket Unix, que
+      # já responde durante o bootstrap da imagem (o servidor temporário sobe com
+      # listen_addresses=''). O compose dava o banco como healthy, liberava o
+      # backend e o `prisma migrate deploy` morria com P1001 na porta ainda fechada.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U smart -d smart_ai_flow"]
       interval: 5s
       timeout: 5s
-      retries: 10
+      retries: 20
+      start_period: 30s
     restart: unless-stopped
 
   backend:
