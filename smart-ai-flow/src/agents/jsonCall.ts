@@ -42,6 +42,15 @@ export async function callJsonAgent<T>(
     const retry = await callLlm({
       ...req,
       maxTokens: tetoRetry,
+      /*
+       * A retentativa NÃO refaz a investigação. O que falhou foi o formato, não
+       * o conteúdo: o modelo já buscou no repositório e já escreveu a resposta —
+       * ele só precisa reemitir como JSON válido. Deixar as ferramentas ligadas
+       * aqui faria ele repetir 8 buscas idênticas pra chegar na mesma conclusão,
+       * pagando a investigação duas vezes.
+       */
+      tools: undefined,
+      runTool: undefined,
       ...(first.truncated
         ? {
             system: `${req.system}\n\nA resposta anterior estourou o limite de tokens e chegou cortada. Seja mais conciso: menos itens em listas, frases mais curtas. O JSON precisa fechar.`,
@@ -79,6 +88,9 @@ export async function callJsonAgent<T>(
           ...retry,
           inputTokens: first.inputTokens + retry.inputTokens,
           outputTokens: first.outputTokens + retry.outputTokens,
+          // a investigação aconteceu na PRIMEIRA tentativa; a segunda não busca
+          toolRounds: first.toolRounds,
+          toolTrail: first.toolTrail,
         },
       };
     } catch (erroFinal) {

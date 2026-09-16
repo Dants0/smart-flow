@@ -25,11 +25,33 @@ import {
  * Devolve também o consumo de tokens: é o que o orquestrador grava na tabela
  * Run pra auditoria de custo (a razão declarada de o token viver só aqui).
  */
+/**
+ * Ferramenta que o modelo pode chamar durante a própria resposta. O schema é
+ * JSON Schema puro, que é o que os dois providers aceitam — a OpenAI só pede um
+ * envelope diferente em volta (ver `callOpenAI`).
+ */
+export interface LlmTool {
+  name: string;
+  description: string;
+  input_schema: Record<string, unknown>;
+}
+
 export interface LlmRequest {
   system: string;
   userText: string;
   images?: CardImage[];
   maxTokens: number;
+  /**
+   * Ferramentas de investigação. Com elas a chamada deixa de ser um tiro só e
+   * vira um LAÇO: o modelo pede uma busca, lê o resultado e decide a próxima —
+   * em vez de receber um contexto que alguém montou antes de ele pensar. É a
+   * diferença entre a esteira e um dev com terminal aberto (ver codeTools.ts).
+   */
+  tools?: LlmTool[];
+  /** Executor das ferramentas. Sem ele, `tools` é ignorado. */
+  runTool?: (name: string, input: unknown) => Promise<string>;
+  /** Teto de rodadas. Passado o teto, o modelo responde com o que já levantou. */
+  maxToolRounds?: number;
 }
 
 export interface LlmResult {
@@ -40,6 +62,35 @@ export interface LlmResult {
   outputTokens: number;
   /** true = a resposta foi CORTADA no limite de tokens (JSON chega pela metade). */
   truncated: boolean;
+  /** Rodadas de ferramenta gastas investigando. 0 = respondeu sem buscar nada. */
+  toolRounds?: number;
+  /** O que ele buscou, na ordem — trilha de auditoria pro dev e pro card. */
+  toolTrail?: string[];
+}
+
+/**
+ * Teto de rodadas de ferramenta. Cada rodada é uma ida à API levando o histórico
+ * inteiro, então o custo cresce com o quadrado da conversa; 12 cobre a cadeia de
+ * chamada mais funda do SMART (evento → função de janela → NVO → função global)
+ * com folga pra errar duas buscas no caminho.
+ */
+const MAX_TOOL_ROUNDS = 12;
+
+/**
+ * Recado que encerra a investigação. Vai anexado ao último lote de resultados —
+ * é o que substitui o `tool_choice: 'none'` que o SDK 0.32 ainda não tem.
+ */
+const AVISO_FIM_DE_BUSCA =
+  'Limite de buscas atingido. Não chame mais ferramentas: responda AGORA com o ' +
+  'JSON final, usando o que você já levantou. Se alguma coisa ficou sem ' +
+  'confirmar, diga isso no próprio JSON em vez de buscar de novo.';
+
+/** Resumo de uma chamada de ferramenta, pra trilha de auditoria. */
+function resumirChamada(name: string, input: unknown): string {
+  const args = (input ?? {}) as Record<string, unknown>;
+  const alvo = args.texto ?? args.caminho ?? args.nome ?? '';
+  const faixa = typeof args.de === 'number' ? ` (linha ${args.de})` : '';
+  return `${name}: ${String(alvo).slice(0, 80)}${faixa}`;
 }
 
 export async function callLlm(req: LlmRequest): Promise<LlmResult> {
@@ -128,7 +179,7 @@ async function comFalhaClassificada<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 async function callAnthropic(
-  { system, userText, images, maxTokens }: LlmRequest,
+  { system, userText, images, maxTokens, tools, runTool, maxToolRounds }: LlmRequest,
   settings: PlatformSettings,
 ): Promise<LlmResult> {
   if (!settings.anthropicCredential) {
@@ -152,32 +203,117 @@ async function callAnthropic(
     { type: 'text', text: userText },
   ];
 
-  const resp = await comFalhaClassificada(() =>
-    anthropic.messages.create({
+  const messages: Anthropic.MessageParam[] = [{ role: 'user', content }];
+  const usarFerramentas = Boolean(tools?.length && runTool);
+  const tetoRodadas = maxToolRounds ?? MAX_TOOL_ROUNDS;
+
+  /*
+   * Consumo SOMADO de todas as rodadas. Sem isso o card registraria só a última
+   * ida à API, e uma investigação de 8 buscas apareceria na auditoria de custo
+   * como se tivesse sido uma pergunta simples.
+   */
+  let inputTokens = 0;
+  let outputTokens = 0;
+  let rodadas = 0;
+  const trilha: string[] = [];
+
+  for (;;) {
+    // Depois do teto o modelo responde sem ferramenta: é isso que garante que
+    // sempre sai um JSON, mesmo que a investigação não tenha fechado.
+    const aindaPodeBuscar = usarFerramentas && rodadas < tetoRodadas;
+
+    const params: Anthropic.MessageCreateParamsNonStreaming = {
       model: settings.model,
       max_tokens: maxTokens,
       system,
-      messages: [{ role: 'user', content }],
-    }),
-  );
+      messages,
+    };
 
-  const text = resp.content
-    .filter((b): b is { type: 'text'; text: string } => b.type === 'text')
-    .map((b) => b.text)
-    .join('\n');
+    /*
+     * As ferramentas continuam declaradas mesmo depois do teto. Removê-las
+     * deixaria o histórico com blocos `tool_use` que a requisição não declara
+     * mais — inconsistência que a API recusa. Quem encerra a investigação é o
+     * recado anexado ao último `tool_result` (ver mais abaixo), e não
+     * `tool_choice: 'none'`, que só existe a partir do SDK 0.39.
+     */
+    if (usarFerramentas) params.tools = tools as unknown as Anthropic.Tool[];
 
-  return {
-    text,
-    provider: 'anthropic',
-    model: settings.model,
-    inputTokens: resp.usage?.input_tokens ?? 0,
-    outputTokens: resp.usage?.output_tokens ?? 0,
-    truncated: resp.stop_reason === 'max_tokens',
-  };
+    const resp = await comFalhaClassificada(() => anthropic.messages.create(params));
+
+    inputTokens += resp.usage?.input_tokens ?? 0;
+    outputTokens += resp.usage?.output_tokens ?? 0;
+
+    const pedidos = resp.content.filter(
+      (b): b is Anthropic.ToolUseBlock => b.type === 'tool_use',
+    );
+
+    if (pedidos.length === 0 || !aindaPodeBuscar || !runTool) {
+      const text = resp.content
+        .filter((b): b is { type: 'text'; text: string } => b.type === 'text')
+        .map((b) => b.text)
+        .join('\n');
+
+      return {
+        text,
+        provider: 'anthropic',
+        model: settings.model,
+        inputTokens,
+        outputTokens,
+        truncated: resp.stop_reason === 'max_tokens',
+        toolRounds: rodadas,
+        toolTrail: trilha,
+      };
+    }
+
+    messages.push({
+      role: 'assistant',
+      content: resp.content as unknown as Anthropic.MessageParam['content'],
+    });
+
+    const resultados: Anthropic.ToolResultBlockParam[] = [];
+    for (const pedido of pedidos) {
+      trilha.push(resumirChamada(pedido.name, pedido.input));
+      let saida: string;
+      try {
+        saida = await runTool(pedido.name, pedido.input);
+      } catch (err) {
+        // Falha de ferramenta vira TEXTO pro modelo, nunca exceção: ele sabe
+        // tentar outra busca, e derrubar o card por um grep que falhou joga
+        // fora toda a investigação já feita.
+        saida = `A ferramenta falhou: ${err instanceof Error ? err.message : String(err)}`;
+      }
+      resultados.push({ type: 'tool_result', tool_use_id: pedido.id, content: saida });
+    }
+
+    /*
+     * O recado de encerramento viaja JUNTO do último lote de resultados, como
+     * mais um bloco da mesma mensagem. Mandar numa mensagem separada quebraria a
+     * alternância user/assistant que a API exige.
+     */
+    const conteudo: Anthropic.MessageParam['content'] = [...resultados];
+    if (rodadas + 1 >= tetoRodadas) {
+      conteudo.push({ type: 'text', text: AVISO_FIM_DE_BUSCA });
+    }
+
+    messages.push({ role: 'user', content: conteudo });
+    rodadas++;
+  }
+}
+
+/** Uma chamada de ferramenta como a OpenAI devolve. */
+interface OpenAiToolCall {
+  id: string;
+  type: 'function';
+  function: { name: string; arguments: string };
+}
+
+interface OpenAiMessage {
+  content?: string | null;
+  tool_calls?: OpenAiToolCall[];
 }
 
 async function callOpenAI(
-  { system, userText, images, maxTokens }: LlmRequest,
+  { system, userText, images, maxTokens, tools, runTool, maxToolRounds }: LlmRequest,
   settings: PlatformSettings,
 ): Promise<LlmResult> {
   if (!settings.openaiApiKey) {
@@ -192,54 +328,116 @@ async function callOpenAI(
     })),
   ];
 
-  const resp = await fetch('https://api.openai.com/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${settings.openaiApiKey}`,
-      'content-type': 'application/json',
-    },
-    body: JSON.stringify({
-      model: settings.openaiModel,
-      max_tokens: maxTokens,
-      // Modo JSON nativo: elimina cerca de markdown e frase de abertura, que eram
-      // metade das falhas de parse. O system prompt já pede 'objeto JSON', que é
-      // o que a OpenAI exige pra aceitar este formato.
-      response_format: { type: 'json_object' },
-      messages: [
-        { role: 'system', content: system },
-        { role: 'user', content },
-      ],
-    }),
-  });
+  const messages: unknown[] = [
+    { role: 'system', content: system },
+    { role: 'user', content },
+  ];
 
-  if (!resp.ok) {
-    // Mesma regra do caminho Anthropic: 429/5xx é espera, não exceção do card.
-    const corpo = await resp.text();
-    if (statusEhTransitorio(resp.status)) {
-      const cota = { 'retry-after': resp.headers.get('retry-after') ?? '' };
-      throw new TransientLlmError(`OpenAI respondeu ${resp.status}: ${corpo}`, {
-        status: resp.status,
-        retryAfterMs: esperaSugerida(cota),
-      });
+  const usarFerramentas = Boolean(tools?.length && runTool);
+  const tetoRodadas = maxToolRounds ?? MAX_TOOL_ROUNDS;
+  /* Envelope da OpenAI em volta do mesmo JSON Schema que a Anthropic come cru. */
+  const ferramentas = (tools ?? []).map((t) => ({
+    type: 'function' as const,
+    function: { name: t.name, description: t.description, parameters: t.input_schema },
+  }));
+
+  let inputTokens = 0;
+  let outputTokens = 0;
+  let rodadas = 0;
+  const trilha: string[] = [];
+
+  for (;;) {
+    const aindaPodeBuscar = usarFerramentas && rodadas < tetoRodadas;
+
+    const resp = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${settings.openaiApiKey}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: settings.openaiModel,
+        max_tokens: maxTokens,
+        // Modo JSON nativo: elimina cerca de markdown e frase de abertura, que eram
+        // metade das falhas de parse. O system prompt já pede 'objeto JSON', que é
+        // o que a OpenAI exige pra aceitar este formato.
+        //
+        // Durante as rodadas de ferramenta ele fica DESLIGADO: a resposta que
+        // pede uma busca não é JSON do contrato, e exigir o formato ali faz o
+        // modelo preferir responder qualquer coisa a investigar.
+        ...(aindaPodeBuscar ? {} : { response_format: { type: 'json_object' } }),
+        // Mesma regra do caminho Anthropic: as ferramentas seguem declaradas
+        // depois do teto, desligadas por `tool_choice`, pra não deixar o
+        // histórico com `tool_calls` que a requisição não declara mais.
+        ...(usarFerramentas
+          ? { tools: ferramentas, ...(aindaPodeBuscar ? {} : { tool_choice: 'none' }) }
+          : {}),
+        messages,
+      }),
+    });
+
+    if (!resp.ok) {
+      // Mesma regra do caminho Anthropic: 429/5xx é espera, não exceção do card.
+      const corpo = await resp.text();
+      if (statusEhTransitorio(resp.status)) {
+        const cota = { 'retry-after': resp.headers.get('retry-after') ?? '' };
+        throw new TransientLlmError(`OpenAI respondeu ${resp.status}: ${corpo}`, {
+          status: resp.status,
+          retryAfterMs: esperaSugerida(cota),
+        });
+      }
+      throw new Error(`OpenAI respondeu ${resp.status}: ${corpo}`);
     }
-    throw new Error(`OpenAI respondeu ${resp.status}: ${corpo}`);
-  }
 
-  const json = (await resp.json()) as {
-    choices?: { message?: { content?: string }; finish_reason?: string }[];
-    usage?: { prompt_tokens?: number; completion_tokens?: number };
-  };
-  const text = json.choices?.[0]?.message?.content;
-  if (!text) {
-    throw new Error('OpenAI não retornou conteúdo na resposta');
-  }
+    const json = (await resp.json()) as {
+      choices?: { message?: OpenAiMessage; finish_reason?: string }[];
+      usage?: { prompt_tokens?: number; completion_tokens?: number };
+    };
 
-  return {
-    text,
-    provider: 'openai',
-    model: settings.openaiModel,
-    inputTokens: json.usage?.prompt_tokens ?? 0,
-    outputTokens: json.usage?.completion_tokens ?? 0,
-    truncated: json.choices?.[0]?.finish_reason === 'length',
-  };
+    inputTokens += json.usage?.prompt_tokens ?? 0;
+    outputTokens += json.usage?.completion_tokens ?? 0;
+
+    const message = json.choices?.[0]?.message;
+    const pedidos = message?.tool_calls ?? [];
+
+    if (pedidos.length === 0 || !aindaPodeBuscar || !runTool) {
+      const text = message?.content;
+      if (!text) {
+        throw new Error('OpenAI não retornou conteúdo na resposta');
+      }
+      return {
+        text,
+        provider: 'openai',
+        model: settings.openaiModel,
+        inputTokens,
+        outputTokens,
+        truncated: json.choices?.[0]?.finish_reason === 'length',
+        toolRounds: rodadas,
+        toolTrail: trilha,
+      };
+    }
+
+    messages.push(message);
+
+    for (const pedido of pedidos) {
+      let args: unknown = {};
+      try {
+        args = JSON.parse(pedido.function.arguments || '{}');
+      } catch {
+        // argumento malformado não derruba a rodada: vira erro legível pro modelo
+        args = {};
+      }
+      trilha.push(resumirChamada(pedido.function.name, args));
+
+      let saida: string;
+      try {
+        saida = await runTool(pedido.function.name, args);
+      } catch (err) {
+        saida = `A ferramenta falhou: ${err instanceof Error ? err.message : String(err)}`;
+      }
+      messages.push({ role: 'tool', tool_call_id: pedido.id, content: saida });
+    }
+
+    rodadas++;
+  }
 }
