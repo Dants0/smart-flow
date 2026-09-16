@@ -8,6 +8,7 @@ import {
   formatReuseInventory,
   ANALYZER_BUDGET,
 } from '../infra/sourceExcerpts';
+import { buildCodeToolset } from '../infra/codeTools';
 import { buildSkillSection } from '../domain/skill';
 import { buildTraceSection } from '../domain/traceSection';
 import { AnalyzerOutputSchema, type AnalyzerOutput } from './contracts';
@@ -33,12 +34,55 @@ Responda SOMENTE com um objeto JSON válido, sem markdown, sem texto fora do JSO
   "confidence": "baixa" | "media" | "alta"
 }
 
+# Você tem o repositório na mão — use antes de responder
+
+Você recebeu TRÊS FERRAMENTAS de leitura do repositório. Elas não são um extra:
+são o jeito certo de fazer esta tarefa, e você deve chamá-las ANTES de escrever
+qualquer conclusão.
+
+- **buscar_no_codigo(texto)** — grep literal em todos os fontes. Devolve arquivo,
+  linha e conteúdo.
+- **ler_fonte(caminho, de, ate)** — lê a faixa de linhas que interessa.
+- **buscar_objeto(nome)** — descobre o caminho real de um objeto.
+
+**O caminho mais curto quase sempre começa na string que o usuário viu.** Se o
+print mostra a mensagem \`O item 'X' não pode ser lançado em conjunto\`, a
+primeira coisa que você faz é \`buscar_no_codigo("pode ser lancado em conjunto")\`
+— sem o começo variável, sem a parte acentuada. Isso costuma devolver o arquivo
+exato em uma chamada, e é infinitamente mais preciso que deduzir o objeto pelo
+nome do módulo.
+
+Ordem que funciona, e que você deve seguir:
+
+1. **Traduza o sintoma numa string literal** — mensagem de erro do print, título
+   de janela, texto de botão, número redondo (255, 2000, 32766). Busque o
+   PREFIXO, nunca a frase inteira: mensagem de tela é concatenada em runtime.
+2. **Leia o trecho que a busca apontou.** Não conclua pela linha do grep: abra a
+   função inteira com \`ler_fonte\`.
+3. **Siga a cadeia.** Achou a função? Busque quem a chama. Achou a query? Veja de
+   onde vêm os parâmetros. **Cada busca é decidida com o resultado da anterior** —
+   é isso que separa investigar de adivinhar.
+4. **Procure o padrão correto em outro lugar do sistema.** Quase todo defeito do
+   SMART já está resolvido em outro módulo: se o ATENDE erra, veja como a AGENDA
+   faz a mesma validação. Achar isso vale mais que qualquer teoria.
+5. **Confirme cada objeto antes de citá-lo.** \`buscar_objeto\` devolvendo vazio é
+   a sua prova de que aquele nome era imaginação. Nome não confirmado não entra
+   em affectedObjects.
+
+Tetos: 12 rodadas de busca. Gaste-as. Uma análise que usou 8 buscas e fechou a
+cadeia vale mais, e custa menos ao time, que uma que usou zero e pediu material.
+
+**A biblioteca do módulo não é o limite da busca.** No SMART Desktop o objeto que
+resolve um chamado do ATENDE costuma morar em \`aplgen50\` ou \`osgen50\`, que são
+compartilhados. Buscar só onde o briefing do módulo cita é o erro mais caro que
+você pode cometer aqui.
+
 # A regra que vale mais que todas as outras
 
-**Você NÃO pede ao dev nada que esteja em arquivo versionado.** A plataforma tem
-o repositório montado e busca por você: os objetos que você citar em
-affectedObjects são resolvidos no índice de arquivos e lidos do fonte, e termo
-citado sem definição no material vira busca literal na rodada seguinte.
+**Você NÃO pede ao dev nada que esteja em arquivo versionado.** Você tem as
+ferramentas: se a resposta está no repositório, ela é sua responsabilidade, não
+do dev. Além disso, os objetos que você citar em affectedObjects são resolvidos
+no índice e lidos do fonte para o próximo estágio.
 
 - **Proibido**: "me cola a seção X do .srd", "qual janela abre esse pop-up?",
   "quem chama wf_seleciona_horario?", "em qual biblioteca está esse objeto?".
@@ -190,10 +234,18 @@ export async function runAnalysis(card: Card): Promise<AnalysisResult> {
     retrieved,
   ].join('\n');
 
+  /*
+   * As ferramentas de investigação. `null` quando o repositório não está montado
+   * — aí a análise roda como antes, com o material pré-carregado, em vez de
+   * oferecer ao modelo uma ferramenta que sempre falha.
+   */
+  const toolset = buildCodeToolset(card.module);
+
   const { output, usage } = await callJsonAgent(AnalyzerOutputSchema, {
     system: SYSTEM + buildSkillSection(skills),
     userText: userPrompt,
     images: card.images,
+    ...(toolset ? { tools: toolset.tools, runTool: toolset.runTool } : {}),
     // Teto de saída. Já subiu duas vezes (2000 -> 4000 -> 16000) pelo mesmo
     // sintoma: análise longa chega cortada, o JSON não fecha e o card vai pra
     // ERRO por um motivo que não é erro. A última análise que passou gastou
@@ -205,9 +257,13 @@ export async function runAnalysis(card: Card): Promise<AnalysisResult> {
 
   /*
    * `grounded` é a bandeira que a UI usa pra avisar "esta análise rodou sem
-   * código real na frente". Agora que o repositório entra aqui, material lido
-   * do fonte conta como grounding: marcar "sem código" só porque o pb-insight
-   * estava fora do ar seria mentira na direção contrária.
+   * código real na frente". Material lido do fonte conta como grounding, e
+   * busca feita pelo próprio modelo conta ainda mais: ela é dirigida pela
+   * evidência, não por um palpite de quem montou o prompt.
    */
-  return { output, usage, grounded: grounded || material.excerpts.length > 0 };
+  return {
+    output,
+    usage,
+    grounded: grounded || material.excerpts.length > 0 || (usage.toolRounds ?? 0) > 0,
+  };
 }

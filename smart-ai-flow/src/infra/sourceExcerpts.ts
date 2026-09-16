@@ -90,6 +90,15 @@ const CALL_CONTEXT = 12;
 const MAX_GREP_HITS = 4;
 
 /**
+ * Fatia do orçamento RESERVADA à busca pelo texto que o usuário viu na tela.
+ *
+ * Não é um teto, é um piso: nenhum objeto citado pela análise pode consumi-la.
+ * Ver o comentário longo em `gatherSourceMaterial` — sem essa reserva, dois
+ * chutes grandes zeravam a única busca que sabia a resposta (SMART-52132).
+ */
+const RESERVA_BUSCA_LITERAL = 0.35;
+
+/**
  * Identificadores no estilo PowerBuilder dentro do texto: `uof_testar_status`,
  * `i_bAvancar`, `w_lea_aih`, `dw_pac01tab`. São eles que dizem QUAL trecho do
  * arquivo interessa.
@@ -260,7 +269,17 @@ export function selectExcerpt(
   }
 
   if (ignorados > 0) {
-    parts.push(`[${ignorados} trecho(s) relevante(s) não couberam no orçamento deste arquivo]`);
+    /*
+     * O aviso diz o que FAZER, não só o que faltou. Antes era um beco sem saída:
+     * o modelo lia "89 trechos não incluídos" e respondia, com razão, que faltava
+     * material (SMART-52132). Agora falta material é problema que ele resolve
+     * sozinho — este orçamento corta o material PRÉ-CARREGADO, e `ler_fonte` não
+     * passa por ele.
+     */
+    parts.push(
+      `[${ignorados} trecho(s) relevante(s) não couberam no orçamento deste arquivo — ` +
+        'use ler_fonte neste caminho, na faixa de linhas que te interessa, para ver o resto]',
+    );
   }
 
   return parts.join('\n...\n');
@@ -508,6 +527,49 @@ export async function gatherSourceMaterial(
     total += excerpt.length;
   }
 
+  /*
+   * PRIMEIRA passada: o texto que o usuário VIU na tela.
+   *
+   * Vem antes de tudo, e com orçamento RESERVADO, por causa do SMART-52132. A
+   * análise chutou `w_atende.srw` (531 mil caracteres) e `w_smk01_n.srw` (116
+   * mil); os dois chutes, truncados em 96 mil cada, mais o .srd da aba, comeram
+   * 222.880 dos 240.000 caracteres. A busca literal — que estava logo abaixo,
+   * atrás de um `if (total < maxTotalChars)` — nunca rodou.
+   *
+   * E ela era a resposta: `git grep "ado em conjunto com o item"` devolve
+   * `u_nv_gera_os.sru` e `u_dw_smm.sru`, os dois arquivos certos, e nada mais.
+   * O card terminou pedindo ao dev um trecho que a plataforma tinha a um comando
+   * de distância.
+   *
+   * A lição não é "aumente o orçamento": é que busca dirigida pela evidência tem
+   * precedência sobre palpite, e precedência que depende de sobra não é
+   * precedência. Por isso a reserva abaixo é intocável pelos chutes.
+   */
+  const literais = extractQuotedLiterals(contextText);
+  if (literais.length > 0) {
+    const reserva = Math.floor(budget.maxTotalChars * RESERVA_BUSCA_LITERAL);
+    const padroes = [
+      ...literais,
+      ...literais.map(asciiFallback).filter((p): p is string => p !== null),
+    ];
+
+    for (const path of await filesMentioning(repo.root, padroes)) {
+      if (excerpts.length >= budget.maxFiles || total >= reserva) break;
+      if (excerpts.some((e) => e.path === path)) continue;
+
+      const content = await read(path);
+      if (content === null) continue;
+
+      // o literal também vira termo de recorte: é ele que marca o trecho certo
+      // dentro de um arquivo que pode ter milhares de linhas
+      for (const literal of literais) {
+        if (!terms.some((t) => t.toLowerCase() === literal.toLowerCase())) terms.push(literal);
+      }
+      for (const ancestor of declaredAncestors(content)) ancestors.add(ancestor);
+      add(path, content);
+    }
+  }
+
   for (const paths of resolved.values()) {
     for (const path of paths) {
       if (excerpts.length >= budget.maxFiles || total >= budget.maxTotalChars) break;
@@ -522,39 +584,27 @@ export async function gatherSourceMaterial(
   }
 
   /*
-   * Segunda passada: busca literal no repositório — ANTES dos ancestrais.
+   * Segunda passada: "quem chama esta função" — termo que o material CITA e não
+   * DEFINE. Diferente da primeira, esta só faz sentido DEPOIS de ler os objetos,
+   * porque é o conteúdo deles que revela o símbolo faltante.
    *
-   * Responde as duas perguntas que a análise costuma terminar fazendo e que
-   * antes viravam tarefa manual do dev: "quem desenha a tela que mostra este
-   * texto" (literal do chamado) e "quem chama esta função" (termo citado no
-   * código lido e definido em lugar nenhum do material).
-   *
-   * Vem antes porque é dirigida: um arquivo que menciona o símbolo que falta é
-   * mais provável de conter a resposta do que um ancestral genérico. Medido no
-   * SMART-51229: os ancestrais (`u_datawindow_padrao`, `u_dw_pac`) sozinhos
-   * comeram 164 mil dos 240 mil caracteres do orçamento, e a busca dirigida nem
-   * chegava a rodar.
+   * Continua antes dos ancestrais porque é dirigida: um arquivo que menciona o
+   * símbolo que falta é mais provável de conter a resposta que um ancestral
+   * genérico. Medido no SMART-51229: os ancestrais (`u_datawindow_padrao`,
+   * `u_dw_pac`) sozinhos comeram 164 mil dos 240 mil do orçamento.
    */
   if (excerpts.length < budget.maxFiles && total < budget.maxTotalChars) {
-    const literais = extractQuotedLiterals(contextText);
     const semDefinicao = termsWithoutDefinition(excerpts, termosDoContexto);
-    const padroes = [
-      ...literais,
-      ...literais.map(asciiFallback).filter((p): p is string => p !== null),
-      ...semDefinicao,
-    ];
 
-    for (const path of await filesMentioning(repo.root, padroes)) {
+    for (const path of await filesMentioning(repo.root, semDefinicao)) {
       if (excerpts.length >= budget.maxFiles || total >= budget.maxTotalChars) break;
       if (excerpts.some((e) => e.path === path)) continue;
 
       const content = await read(path);
       if (content === null) continue;
 
-      // o literal também vira termo de recorte: é ele que marca o trecho certo
-      // dentro de um arquivo que pode ter milhares de linhas
-      for (const literal of [...literais, ...semDefinicao]) {
-        if (!terms.some((t) => t.toLowerCase() === literal.toLowerCase())) terms.push(literal);
+      for (const termo of semDefinicao) {
+        if (!terms.some((t) => t.toLowerCase() === termo.toLowerCase())) terms.push(termo);
       }
       add(path, content);
     }

@@ -56,8 +56,9 @@ Duas paradas antecipadas, ambas deliberadas:
   token OAuth a cota é a da assinatura — a mesma do Claude Code do dev — então
   bater o teto é rotina, e rotina não pode exigir clique humano.
 - Contexto da IA = `CLAUDE.md` do sistema + **código real do repositório, nos
-  dois estágios** + inventário de reuso (`git grep`) + RAG do PB Insight + skill
-  do time (Configurações → IA) + o chamado.
+  dois estágios** + **as ferramentas de busca que o modelo usa sozinho** +
+  inventário de reuso (`git grep`) + RAG do PB Insight + skill do time
+  (Configurações → IA) + o chamado.
 
 **A análise lê o repositório, não só o RAG.** Até a sprint de 2026-08-25 o
 analyzer via apenas os trechos do PB Insight, e isso era uma venda: busca
@@ -67,6 +68,44 @@ controle. Os dois estágios têm orçamentos opostos, de propósito
 (`sourceExcerpts.ts`): a análise lê **mais arquivos com menos de cada um**
 (largura, pra cadeia atravessar objetos), a proposta lê **menos arquivos
 inteiros** (profundidade, pro diff bater no bloco certo).
+
+**A IA busca sozinha — o contexto não é mais decidido antes de ela pensar.**
+(`infra/codeTools.ts`, laço em `infra/llm.ts`.) Os dois agentes recebem três
+ferramentas de leitura — `buscar_no_codigo` (grep literal), `ler_fonte` (faixa de
+linhas) e `buscar_objeto` (caminho real) — e chamam quantas vezes precisarem, até
+12 rodadas, **cada busca decidida com o resultado da anterior**.
+
+O motivo é o SMART-52132, e ele vale ser lido inteiro porque a falha era
+estrutural, não de prompt. A esteira montava todo o contexto ANTES da primeira
+chamada: a análise chutava os objetos e o pipeline lia esses chutes. O chamado
+não tinha nenhum identificador PowerBuilder nem frase entre aspas no texto, então
+`extractIdentifiers` e `extractQuotedLiterals` devolveram lista vazia, a análise
+rodou sem fonte nenhum e citou o único objeto concreto que tinha à mão — o
+`w_atende` da tabela em `modules/atende/CLAUDE.md`. O código estava em
+`u_nv_gera_os.sru`, em `aplgen50`, biblioteca que aquele briefing não cita.
+
+E o pior: a resposta estava a **um** comando de distância
+(`git grep "ado em conjunto com o item"` devolve os dois arquivos certos e mais
+nada), mas a busca literal ficava atrás de um `if (total < maxTotalChars)` e os
+chutes — `w_atende.srw` tem 531 mil caracteres — já tinham comido 222.880 dos
+240.000. Com um palpite errado na frente, as duas chamadas erravam juntas e não
+havia segunda rodada.
+
+Duas correções saíram disso, e as duas têm teste (`tests/codeTools.test.ts`):
+
+1. **Reserva de orçamento** (`RESERVA_BUSCA_LITERAL`, `sourceExcerpts.ts`): a
+   busca pelo texto que o usuário viu na tela roda **primeiro** e com fatia
+   própria. Precedência que depende de sobra não é precedência.
+2. **O laço de ferramentas**, que é a correção de verdade: em vez de acertar o
+   contexto no primeiro palpite, o modelo investiga como um dev investiga.
+
+Sai **mais barato**, não mais caro: empilhar 96 mil caracteres de um arquivo que
+o modelo mal usa custa mais que deixá-lo ler as 200 linhas da função e parar.
+
+Duas regras ao mexer nisso: as ferramentas são **somente leitura** e sempre
+contra `HEAD` (a esteira nunca escreve no repositório do cliente); e a
+retentativa de formato em `jsonCall.ts` roda **sem** ferramentas — o que falhou
+ali foi o JSON, não a investigação, e refazê-la pagaria as buscas duas vezes.
 
 ## Estrutura
 
@@ -81,7 +120,9 @@ src/
   agents/        contracts.ts (Zod + parser tolerante) · analyzer.ts
                  proposer.ts · jsonCall.ts (retentativa dirigida)
   orchestrator/  orchestrator.ts (roda os estágios de IA, audita em Run)
-  infra/         llm.ts · llmErrors.ts (429 vira espera, não ERRO)
+  infra/         llm.ts (laço de ferramentas) · llmErrors.ts (429 vira espera)
+                 codeTools.ts (as 3 buscas que a IA faz sozinha)
+                 sourceExcerpts.ts (material pré-carregado, com reserva)
                  pbInsight.ts · traceService.ts · jiraService.ts
                  repos.ts (os dois repositórios) · workspace.ts (aplica diff)
                  git.ts · bitbucket.ts · objectIndex.ts (arquivos que existem)
@@ -92,7 +133,7 @@ src/
 modules/         briefing por sistema/módulo do cliente
   smartdesktop/  atende/ agenda/ mwsus/ cadgf/ pacdel/ cirurg/  smartweb/
 prisma/          User · Card · History · Run · Job · PlatformSettings
-tests/           vitest (193 testes)
+tests/           vitest (220 testes)
 ```
 
 ## Os dois repositórios do cliente

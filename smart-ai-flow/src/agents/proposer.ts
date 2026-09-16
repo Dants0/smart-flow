@@ -3,6 +3,7 @@ import { retrieveContext } from '../infra/pbInsight';
 import { loadModuleContext } from '../infra/moduleContext';
 import { getSettings } from '../infra/settingsRepository';
 import { unknownDiffPaths } from '../infra/objectIndex';
+import { buildCodeToolset } from '../infra/codeTools';
 import { gatherSourceMaterial, reuseInventory, formatReuseInventory } from '../infra/sourceExcerpts';
 import { parseDiffTargets } from '../infra/workspace';
 import { buildSkillSection } from '../domain/skill';
@@ -33,6 +34,32 @@ Responda SOMENTE com um objeto JSON válido, sem markdown, neste formato:
   "risks": string[],
   "testHint": string
 }
+
+# Antes de dizer que falta material, BUSQUE
+
+Você tem três ferramentas de leitura do repositório:
+
+- **buscar_no_codigo(texto)** — grep literal nos fontes (arquivo, linha, conteúdo).
+- **ler_fonte(caminho, de, ate)** — lê a faixa de linhas.
+- **buscar_objeto(nome)** — caminho real de um objeto.
+
+O material que veio pronto no prompt é um PONTO DE PARTIDA, não o seu limite. Se
+o trecho que você precisa alterar não veio, ou veio cortado, **vá buscar**: é uma
+chamada de ferramenta, não um pedido ao dev.
+
+Use-as, no mínimo, para:
+
+1. **Abrir a função inteira que você vai alterar.** Diff escrito sobre um trecho
+   truncado não aplica — o contexto das linhas em volta precisa bater.
+2. **Confirmar cada caminho do diff.** \`buscar_objeto\` antes de escrever o
+   cabeçalho do diff. Caminho inventado é pior que diff nenhum.
+3. **Achar todos os pontos com o mesmo defeito.** Se a causa raiz é uma função,
+   busque quem a chama; se é um padrão de query, busque o padrão.
+4. **Conferir se o sistema já resolve isso em outro lugar.** Copiar o jeito que
+   o codebase já faz vale mais que inventar um jeito novo.
+
+"Falta material" só é resposta aceitável depois de você ter gastado suas buscas e
+elas terem voltado vazias — e aí você diz **o que buscou**, não o que faltou.
 
 Regras:
 - Mudança cirúrgica. Não reescreva objetos inteiros.
@@ -194,12 +221,17 @@ export async function runProposal(card: Card): Promise<ProposalResult> {
     retrieved,
   ].join('\n');
 
+  // Mesmas ferramentas do analyzer: o proposer é quem mais sofria com trecho
+  // cortado, porque diff contra código truncado não aplica.
+  const toolset = buildCodeToolset(card.module);
+
   const { output, usage } = await callJsonAgent(ProposerOutputSchema, {
     system: SYSTEM + buildSkillSection(skills),
     userText: userPrompt,
     // Os prints também vão pro proposer: a mensagem de erro exata e o estado da
     // tela mudam o diff, e antes só o analyzer os enxergava.
     images: card.images,
+    ...(toolset ? { tools: toolset.tools, runTool: toolset.runTool } : {}),
     // Mesmo motivo do analyzer, e aqui aperta mais cedo: diff com contexto é
     // caro em token, e a última proposta que passou gastou 6507 de 8000 (81%).
     maxTokens: 16000,
