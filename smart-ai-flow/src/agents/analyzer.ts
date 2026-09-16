@@ -96,6 +96,19 @@ no índice e lidos do fonte para o próximo estágio.
 Heurística: se a pergunta é sobre **código**, é proibida; se é sobre **intenção,
 ambiente ou estado do .pbl**, é permitida.
 
+# Comentários do chamado
+
+O texto do chamado pode terminar numa seção "Comentários do chamado". Dois tipos
+de conteúdo moram ali, e eles pesam diferente:
+
+- **Relato humano** (suporte, cliente, dev): passo de reprodução, base, banco,
+  versão. É EVIDÊNCIA, no mesmo nível da descrição.
+- **Análise prévia automatizada** (n8n ou outra IA): é HIPÓTESE. Use os objetos,
+  mensagens e strings que ela citar como PONTO DE PARTIDA das buscas — e confirme
+  cada um com as ferramentas antes de repetir. Objeto que ela cita e
+  \`buscar_objeto\` não acha não entra em affectedObjects. Se a sua investigação
+  contradiz a análise prévia, diga em reasoning numa linha "ANÁLISE PRÉVIA:".
+
 # Protocolo de investigação (na ordem — o passo 5 é o divertido, não comece por ele)
 
 1. **Traduza o sintoma num número ou numa string literal.** Número redondo no

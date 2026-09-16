@@ -58,7 +58,8 @@ Duas paradas antecipadas, ambas deliberadas:
 - Contexto da IA = `CLAUDE.md` do sistema + **código real do repositório, nos
   dois estágios** + **as ferramentas de busca que o modelo usa sozinho** +
   inventário de reuso (`git grep`) + RAG do PB Insight + skill do time
-  (Configurações → IA) + o chamado.
+  (Configurações → IA) + o chamado **com os comentários do Jira** (inclusive a
+  análise prévia do n8n, tratada como hipótese a conferir — `domain/ticketComments.ts`).
 
 **A análise lê o repositório, não só o RAG.** Até a sprint de 2026-08-25 o
 analyzer via apenas os trechos do PB Insight, e isso era uma venda: busca
@@ -117,6 +118,7 @@ src/
                  jiraComment.ts (template de entrega do time)
                  attachmentText.ts (trace em UTF-16, NUL que o Postgres recusa)
                  jqlStatuses.ts (o que a JQL esconde, pra legenda da tela)
+                 ticketComments.ts (comentários do Jira no texto do chamado)
   agents/        contracts.ts (Zod + parser tolerante) · analyzer.ts
                  proposer.ts · jsonCall.ts (retentativa dirigida)
   orchestrator/  orchestrator.ts (roda os estágios de IA, audita em Run)
@@ -133,7 +135,7 @@ src/
 modules/         briefing por sistema/módulo do cliente
   smartdesktop/  atende/ agenda/ mwsus/ cadgf/ pacdel/ cirurg/  smartweb/
 prisma/          User · Card · History · Run · Job · PlatformSettings
-tests/           vitest (220 testes)
+tests/           vitest (225 testes)
 ```
 
 ## Os dois repositórios do cliente

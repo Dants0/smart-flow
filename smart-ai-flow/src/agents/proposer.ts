@@ -35,6 +35,14 @@ Responda SOMENTE com um objeto JSON válido, sem markdown, neste formato:
   "testHint": string
 }
 
+# Comentários do chamado
+
+Se o chamado trouxer a seção "Comentários do chamado", relato humano (suporte,
+cliente) é evidência; análise prévia automatizada (n8n ou outra IA) é hipótese.
+Quando ela divergir da análise que você recebeu, vale a análise — que foi
+conferida contra o código. Nunca tire caminho ou nome de objeto do comentário
+sem confirmar com as ferramentas.
+
 # Antes de dizer que falta material, BUSQUE
 
 Você tem três ferramentas de leitura do repositório:

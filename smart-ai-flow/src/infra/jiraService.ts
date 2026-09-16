@@ -1,6 +1,7 @@
 import type { CardImage, CardTraceFile } from '../domain/card';
 import { decodeAttachmentText } from '../domain/attachmentText';
 import { parseExcludedStatuses } from '../domain/jqlStatuses';
+import { formatTicketComments, type JiraCommentRaw } from '../domain/ticketComments';
 import { getSettings } from './settingsRepository';
 import {
   blockJiraAuth,
@@ -43,7 +44,13 @@ interface JiraIssueResponse {
     summary: string;
     description: string | null;
     attachment: JiraAttachment[];
+    comment?: JiraCommentPage;
   };
+}
+
+interface JiraCommentPage {
+  comments: JiraCommentRaw[];
+  total?: number;
 }
 
 export type JiraDenialCode = 'CAPTCHA' | 'UNAUTHORIZED';
@@ -153,6 +160,37 @@ async function downloadAttachment(
   return Buffer.from(await resp.arrayBuffer());
 }
 
+/**
+ * Todos os comentários do chamado. O GET do issue já os traz embutidos, mas o
+ * Jira pode paginar esse bloco — quando `total` passa do que veio, busca a
+ * lista inteira na rota própria. Falha aqui não impede criar o card: comentário
+ * é contexto a mais, e o chamado em si já foi lido.
+ */
+async function fetchAllComments(
+  baseUrl: string,
+  key: string,
+  embedded: JiraCommentPage | undefined,
+  creds: JiraCredentials,
+  userId: string,
+): Promise<JiraCommentRaw[]> {
+  const comments = embedded?.comments ?? [];
+  if (embedded && (embedded.total ?? 0) <= comments.length) return comments;
+
+  try {
+    const resp = await jiraFetch(
+      `${baseUrl}/rest/api/2/issue/${encodeURIComponent(key)}/comment?maxResults=1000`,
+      creds,
+      userId,
+    );
+    if (!resp.ok) return comments;
+    return ((await resp.json()) as JiraCommentPage).comments ?? comments;
+  } catch (err) {
+    // negação de autenticação continua sendo negação — o disjuntor já armou
+    if (err instanceof JiraAuthError) throw err;
+    return comments;
+  }
+}
+
 export async function fetchJiraIssue(userId: string, key: string): Promise<JiraIssuePreview> {
   const { baseUrl, creds } = await jiraContext(userId);
 
@@ -166,7 +204,12 @@ export async function fetchJiraIssue(userId: string, key: string): Promise<JiraI
   }
 
   const issue = (await resp.json()) as JiraIssueResponse;
-  const rawTicket = [issue.fields.summary, '', issue.fields.description ?? '']
+  // A análise prévia do n8n e o que o suporte descobriu depois vivem nos
+  // comentários — ver domain/ticketComments.ts.
+  const comments = formatTicketComments(
+    await fetchAllComments(baseUrl, key, issue.fields.comment, creds, userId),
+  );
+  const rawTicket = [issue.fields.summary, '', issue.fields.description ?? '', '', comments]
     .join('\n')
     .trim();
 
