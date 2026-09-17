@@ -1,5 +1,7 @@
 import type { PlatformSettings as PlatformSettingsRow } from '@prisma/client';
 import { prisma } from './db';
+import { decryptSecret, encryptSecret } from './crypto';
+import type { Mw20Conexao, MwEngine } from '../domain/mwDesenv';
 
 /**
  * Configuração da plataforma — linha única no banco (id=1), substitui o .env
@@ -25,13 +27,17 @@ export interface PlatformSettings {
 
   traceServiceUrl: string;
 
-  jiraBaseUrl: string | null;
+  /** Nunca vazio: sem valor gravado, vale `DEFAULT_JIRA_BASE_URL`. */
+  jiraBaseUrl: string;
   jiraAssignedJql: string;
 
   pbInsightUrl: string;
 
   /** Skill do time (texto livre) injetada no prompt dos agentes. null = nenhuma. */
   skills: string | null;
+
+  /** Conexão ao banco MW20 (tabela `usr`), com a senha já decifrada. */
+  mw20: Mw20Conexao;
 
   updatedAt: string;
 }
@@ -58,6 +64,14 @@ const DEFAULTS = {
   jiraAssignedJql: DEFAULT_ASSIGNED_JQL,
   pbInsightUrl: PB_INSIGHT_URL,
 };
+
+/**
+ * A instância do Jira da Pixeon. Com o login pela conta do Jira, a URL base
+ * deixou de ser opcional: sem ela ninguém entra na plataforma, nem o admin que
+ * iria configurá-la. `JIRA_BASE_URL` no ambiente sobrescreve (homologação).
+ */
+export const DEFAULT_JIRA_BASE_URL =
+  normalizeBaseUrl(process.env.JIRA_BASE_URL ?? null) ?? 'https://portalcliente.pixeon.com';
 
 const LOOPBACK = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:|\/|$)/i;
 
@@ -113,16 +127,29 @@ export async function getSettings(): Promise<PlatformSettings> {
 }
 
 export type PlatformSettingsPatch = Partial<
-  Omit<PlatformSettings, 'updatedAt'>
+  Omit<PlatformSettings, 'updatedAt' | 'mw20' | 'jiraBaseUrl'> & {
+    jiraBaseUrl: string;
+    mw20Engine: MwEngine | '';
+    mw20Host: string;
+    /** null apaga (volta pra porta padrão do banco). */
+    mw20Port: number | null;
+    mw20Database: string;
+    mw20User: string;
+    /** Vazio mantém a senha gravada — igual às outras credenciais da tela. */
+    mw20Password: string;
+  }
 >;
 
 /** Atualiza só os campos enviados. String vazia é tratada como "sem valor" (não apaga sem querer). */
 export async function updateSettings(patch: PlatformSettingsPatch): Promise<PlatformSettings> {
   const atual = await ensureRow();
 
-  const data: Record<string, string | null> = {};
-  for (const [key, value] of Object.entries(patch)) {
-    if (value === undefined) continue;
+  const data: Record<string, string | number | null> = {};
+  const { mw20Password, mw20Port, ...resto } = patch;
+  if (mw20Password) data.mw20PasswordEnc = encryptSecret(mw20Password);
+  if (mw20Port !== undefined) data.mw20Port = mw20Port;
+  for (const [key, value] of Object.entries(resto)) {
+    if (value === undefined || typeof value !== 'string') continue;
     data[key] = key === 'jiraBaseUrl' ? normalizeBaseUrl(value) : value === '' ? null : value;
   }
 
@@ -152,10 +179,18 @@ function toSettings(row: Awaited<ReturnType<typeof ensureRow>>): PlatformSetting
     openaiApiKey: row.openaiApiKey,
     openaiModel: row.openaiModel,
     traceServiceUrl: row.traceServiceUrl,
-    jiraBaseUrl: normalizeBaseUrl(row.jiraBaseUrl),
+    jiraBaseUrl: normalizeBaseUrl(row.jiraBaseUrl) ?? DEFAULT_JIRA_BASE_URL,
     jiraAssignedJql: row.jiraAssignedJql,
     pbInsightUrl: row.pbInsightUrl,
     skills: row.skills,
+    mw20: {
+      engine: (row.mw20Engine as MwEngine | null) ?? null,
+      host: row.mw20Host,
+      port: row.mw20Port,
+      database: row.mw20Database,
+      user: row.mw20User,
+      password: row.mw20PasswordEnc ? decryptSecret(row.mw20PasswordEnc) : null,
+    },
     updatedAt: row.updatedAt.toISOString(),
   };
 }

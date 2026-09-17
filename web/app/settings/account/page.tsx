@@ -9,6 +9,7 @@ import { HelpTip } from "@/components/HelpTip";
 import { JiraTroubleshooting } from "@/components/JiraTroubleshooting";
 import { JiraConnectionCheck } from "@/components/settings/JiraConnectionCheck";
 import { BitbucketCheck } from "@/components/settings/BitbucketCheck";
+import { MwDesenvCheck } from "@/components/settings/MwDesenvCheck";
 
 export default function AccountSettingsPage() {
   const [me, setMe] = useState<AuthUser | null>(null);
@@ -25,6 +26,8 @@ export default function AccountSettingsPage() {
   const [bitbucketUser, setBitbucketUser] = useState("");
   const [bitbucketEmail, setBitbucketEmail] = useState("");
   const [bitbucketAppPassword, setBitbucketAppPassword] = useState("");
+  const [mwUser, setMwUser] = useState("");
+  const [mwPassword, setMwPassword] = useState("");
 
   useEffect(() => {
     getMe()
@@ -36,6 +39,7 @@ export default function AccountSettingsPage() {
         setGitEmail(u.gitEmail ?? "");
         setBitbucketUser(u.bitbucketUser ?? "");
         setBitbucketEmail(u.bitbucketEmail ?? "");
+        setMwUser(u.mwUser ?? "");
       })
       .catch((err) => setError(err instanceof Error ? err.message : "falha ao carregar"));
   }, []);
@@ -52,16 +56,20 @@ export default function AccountSettingsPage() {
         gitEmail,
         bitbucketUser,
         bitbucketEmail,
+        mwUser,
       };
       if (password.trim()) patch.password = password.trim();
       if (jiraPassword.trim()) patch.jiraPassword = jiraPassword.trim();
       if (bitbucketAppPassword.trim()) patch.bitbucketAppPassword = bitbucketAppPassword.trim();
+      // Sem trim: a senha do MW desenv é comparada exata com a usr.
+      if (mwPassword) patch.mwPassword = mwPassword;
 
       const updated = await updateMe(patch);
       setMe(updated);
       setPassword("");
       setJiraPassword("");
       setBitbucketAppPassword("");
+      setMwPassword("");
       setSaved(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : "falha ao salvar");
@@ -73,6 +81,7 @@ export default function AccountSettingsPage() {
   // Campos do Jira alterados e ainda não salvos: o teste usa a credencial
   // gravada, então testar agora responderia sobre a senha antiga.
   const jiraDirty = !!jiraPassword.trim() || jiraUser !== (me?.jiraUser ?? "");
+  const mwDirty = !!mwPassword || mwUser !== (me?.mwUser ?? "");
   const bitbucketDirty =
     !!bitbucketAppPassword.trim() ||
     bitbucketUser !== (me?.bitbucketUser ?? "") ||
@@ -109,18 +118,21 @@ export default function AccountSettingsPage() {
 
       <FieldGroup title="Perfil">
         <TextField label="Nome de exibição" value={displayName} onChange={setDisplayName} />
-        <TextField
-          label={me.mustChangePassword ? "Nova senha (obrigatória)" : "Nova senha"}
-          type="password"
-          value={password}
-          onChange={setPassword}
-          placeholder={
-            me.mustChangePassword
-              ? "sua conta ainda usa a senha provisória"
-              : "deixe em branco pra manter a atual"
-          }
-          hint="Mínimo 8 caracteres."
-        />
+        {/* Conta vinculada ao Jira entra com a senha do Jira: senha local não vale. */}
+        {!me.jiraUser && (
+          <TextField
+            label={me.mustChangePassword ? "Nova senha (obrigatória)" : "Nova senha"}
+            type="password"
+            value={password}
+            onChange={setPassword}
+            placeholder={
+              me.mustChangePassword
+                ? "sua conta ainda usa a senha provisória"
+                : "deixe em branco pra manter a atual"
+            }
+            hint="Mínimo 8 caracteres."
+          />
+        )}
       </FieldGroup>
 
       <FieldGroup
@@ -164,7 +176,7 @@ export default function AccountSettingsPage() {
           placeholder={
             me.jiraPasswordSet ? "•••••••• (já configurada — deixe em branco pra manter)" : "sua senha do Jira"
           }
-          hint="Guardada cifrada no banco (AES-256-GCM). Precisa ser reversível porque o Jira Server só aceita Basic Auth."
+          hint="Atualizada a cada login na plataforma. Guardada cifrada no banco (AES-256-GCM) — precisa ser reversível porque o Jira Server só aceita Basic Auth."
         />
 
         <JiraConnectionCheck
@@ -238,6 +250,28 @@ export default function AccountSettingsPage() {
           hasCredentials={!!me.bitbucketUser && me.bitbucketAppPasswordSet}
           dirty={bitbucketDirty}
         />
+      </FieldGroup>
+
+      {/*
+        MW desenv: login da tabela usr do MW20. Conferido ao salvar — é o que libera
+        a geração de versão com a identidade do dev, em Versionamento.
+      */}
+      <FieldGroup title="MW desenv">
+        <p className="text-xs leading-relaxed text-zinc-400">
+          Seu login e senha do MW desenv. A plataforma confere na tabela <code>usr</code> do banco
+          MW20 (login, senha e usuário ativo); validada, a geração de versão fica liberada com os
+          seus dados em Versionamento.
+        </p>
+        <TextField label="Usuário do MW desenv" value={mwUser} onChange={setMwUser} placeholder="seu login no MW" />
+        <TextField
+          label="Senha do MW desenv"
+          type="password"
+          value={mwPassword}
+          onChange={setMwPassword}
+          placeholder={me.mwPasswordSet ? "•••••••• (já configurada — deixe em branco pra manter)" : "sua senha do MW desenv"}
+          hint="Guardada cifrada no banco da plataforma."
+        />
+        <MwDesenvCheck me={me} dirty={mwDirty} onUpdated={setMe} />
       </FieldGroup>
 
       <SaveBar saving={saving} saved={saved} error={error} onSave={handleSave} />

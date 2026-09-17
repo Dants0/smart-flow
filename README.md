@@ -75,10 +75,16 @@ DB_PORT=5432
 Depois de trocar: `docker compose up -d --build` (o `web` precisa de build novo,
 porque o endereço da API é assado no bundle).
 
-### 3. Criar o usuário administrador
+### 3. Entrar com a conta do Jira
 
-Abra **http://localhost:3000**. Na primeira vez a tela pede a criação do
-administrador — o primeiro usuário cadastrado vira admin automaticamente.
+Abra **http://localhost:3000** e entre com **seu usuário e senha do Jira**
+(`https://portalcliente.pixeon.com`). Não existe cadastro: quem o Jira aceita
+entra, e a conta na plataforma nasce nesse momento. O **primeiro** a entrar vira
+administrador. A senha digitada no login também vira a credencial que a esteira
+usa pra buscar seus chamados — e é atualizada a cada login.
+
+Outra instância (homologação)? Defina `JIRA_BASE_URL` no ambiente do backend, ou
+troque em Configurações → Jira.
 
 ### 4. Configurar a plataforma
 
@@ -89,9 +95,15 @@ Já dentro da aplicação, em **Configurações**:
 2. **IA → Skills** *(admin)* — campo aberto onde o dev cola o procedimento que o
    time segue pra resolver chamado. Opcional, mas é o jeito mais barato de
    melhorar a análise (ver abaixo).
-3. **Jira** *(admin)* — a URL da instância (ex.: `https://portalcliente.pixeon.com`).
-4. **Minha conta** — **seu** usuário e senha do Jira. São pessoais: é com eles
-   que a plataforma descobre os chamados atribuídos a você.
+3. **Jira** *(admin)* — já vem apontando pra `https://portalcliente.pixeon.com`;
+   ajuste só a JQL, se precisar.
+4. **MW desenv** *(admin)* — conexão com o banco MW20 (SQL Server ou Oracle,
+   usuário só de leitura). É onde a plataforma confere a credencial do MW desenv
+   de cada dev.
+5. **Minha conta** — preenchida pelo login com as credenciais do Jira; aqui
+   entram o Bitbucket, a identidade de commit e o login do MW desenv (conferido
+   na tabela `usr` ao salvar; validado, libera a geração de versão em
+   Versionamento).
 
 Nada disso vive em arquivo de configuração: tudo é editável pela interface e
 vale na hora, sem reiniciar nada.

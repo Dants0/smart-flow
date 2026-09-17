@@ -2,9 +2,10 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { LuGauge, LuLoaderCircle, LuRefreshCw, LuListChecks, LuDollarSign } from "react-icons/lu";
-import { fetchMonitor, type MonitorSnapshot } from "@/lib/api";
+import { fetchMonitor, getMe, type ConsumoEscopo, type MonitorSnapshot } from "@/lib/api";
 import { SettingsSection } from "@/components/settings/fields";
 import { ResourceCard } from "@/components/settings/ResourceCard";
+import { formatUsd } from "@/lib/money";
 
 const POLL_MS = 20000;
 
@@ -23,11 +24,19 @@ export default function ResourcesPage() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastChecked, setLastChecked] = useState<Date | null>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [escopo, setEscopo] = useState<ConsumoEscopo>("meu");
+
+  useEffect(() => {
+    getMe()
+      .then((u) => setIsAdmin(u.isAdmin))
+      .catch(() => setIsAdmin(false));
+  }, []);
 
   const refresh = useCallback(async () => {
     setRefreshing(true);
     try {
-      setData(await fetchMonitor());
+      setData(await fetchMonitor(escopo));
       setLastChecked(new Date());
       setError(null);
     } catch (err) {
@@ -35,7 +44,7 @@ export default function ResourcesPage() {
     } finally {
       setRefreshing(false);
     }
-  }, []);
+  }, [escopo]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch-on-mount + polling, sem external store pra subscrever
@@ -126,11 +135,32 @@ export default function ResourcesPage() {
 
           <SettingsSection
             icon={LuDollarSign}
-            title="Consumo de IA (30 dias)"
-            description="Toda chamada ao LLM é registrada. Custo estimado a partir da tabela de preços por modelo — a fatura do provedor continua sendo a fonte oficial."
+            title={data.usage.escopo === "plataforma" ? "Consumo de IA da plataforma (30 dias)" : "Meu consumo de IA (30 dias)"}
+            description={`${
+              data.usage.escopo === "plataforma"
+                ? "Soma de todos os usuários."
+                : "Só o que você gastou: a esteira dos seus cards e as perguntas que você fez no chat."
+            } Custo estimado a partir da tabela de preços por modelo — a fatura do provedor continua sendo a fonte oficial.`}
           >
+            {isAdmin && (
+              <div className="flex w-fit rounded-md border border-zinc-300 p-0.5 text-xs dark:border-zinc-700">
+                {(["meu", "plataforma"] as const).map((opcao) => (
+                  <button
+                    key={opcao}
+                    onClick={() => setEscopo(opcao)}
+                    className={`rounded px-2.5 py-1 font-medium ${
+                      escopo === opcao
+                        ? "bg-zinc-900 text-white dark:bg-white dark:text-zinc-900"
+                        : "text-zinc-600 hover:bg-zinc-50 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                    }`}
+                  >
+                    {opcao === "meu" ? "Meu consumo" : "Toda a plataforma"}
+                  </button>
+                ))}
+              </div>
+            )}
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-              <Stat label="Custo" value={`$${data.usage.costUsd.toFixed(4)}`} />
+              <Stat label="Custo" value={formatUsd(data.usage.costUsd)} />
               <Stat
                 label="Chamadas"
                 value={String(data.usage.totalRuns)}
@@ -149,7 +179,7 @@ export default function ResourcesPage() {
                   >
                     <span className="font-mono text-xs text-zinc-700 dark:text-zinc-300">{m.model}</span>
                     <span className="text-xs text-zinc-500">
-                      {m.runs} chamada{m.runs > 1 ? "s" : ""} · ${m.costUsd.toFixed(4)}
+                      {m.runs} chamada{m.runs > 1 ? "s" : ""} · {formatUsd(m.costUsd)}
                     </span>
                   </div>
                 ))}

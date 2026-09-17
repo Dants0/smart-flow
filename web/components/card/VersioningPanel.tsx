@@ -12,9 +12,12 @@ import {
   LuRefreshCw,
   LuFilePen,
   LuRotateCcw,
+  LuPackage,
 } from "react-icons/lu";
+import Link from "next/link";
 import {
   applyCardDiff,
+  getMe,
   commitCard,
   getJiraCommentDraft,
   getVersioningPreview,
@@ -25,6 +28,7 @@ import {
   type VersioningPreview,
 } from "@/lib/api";
 import type { Card } from "@/lib/types";
+import type { AuthUser } from "@/lib/auth";
 
 /**
  * Versionamento como passo a passo explícito.
@@ -37,9 +41,10 @@ import type { Card } from "@/lib/types";
  *   2. commitar o que mudou, na branch do chamado
  *   3. push + PR
  *   4. comentário de entrega no Jira
- *   5. resolver o card, dizendo o que foi aplicado de fato
+ *   5. gerar a versão no MW desenv, com a credencial do dev validada na usr
+ *   6. resolver o card, dizendo o que foi aplicado de fato
  *
- * O "o que você aplicou de fato" mora no passo 5, e não lá no começo: é a
+ * O "o que você aplicou de fato" mora no último passo, e não lá no começo: é a
  * última coisa que o dev sabe, não a primeira.
  */
 function Step({
@@ -92,6 +97,12 @@ export function VersioningPanel({
   const [comment, setComment] = useState("");
   const [showComment, setShowComment] = useState(false);
   const [resolutionText, setResolutionText] = useState("");
+  // A geração de versão sai com a credencial do MW desenv de quem está olhando.
+  const [me, setMe] = useState<AuthUser | null>(null);
+
+  useEffect(() => {
+    getMe().then(setMe).catch(() => setMe(null));
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -376,8 +387,46 @@ export function VersioningPanel({
         )}
       </Step>
 
-      {/* 5. fechar */}
-      <Step n={5} title="Resolver o card">
+      {/* 5. MW desenv */}
+      <Step n={5} title="Gerar versão no MW desenv">
+        {!me ? (
+          <LuLoaderCircle className="size-4 animate-spin text-zinc-400" />
+        ) : me.mwValidatedAt ? (
+          <div className="flex flex-col gap-2">
+            <p className="text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">
+              Credencial validada na tabela usr do MW20: a versão sai como{" "}
+              <strong className="font-mono">{me.mwUser}</strong>.
+            </p>
+            {/*
+              O disparo da geração ainda não foi integrado — nesta etapa só a
+              credencial é cadastrada e conferida. O botão já mora aqui pra que
+              ligar a integração não mude o fluxo que o dev conhece.
+            */}
+            <button
+              disabled
+              title="Disparo da geração de versão ainda não integrado"
+              className="flex w-fit items-center gap-1.5 rounded-md border border-zinc-300 px-3 py-2 text-sm font-medium text-zinc-700 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-300"
+            >
+              <LuPackage className="size-4" />
+              Gerar versão
+            </button>
+            <p className="text-[11px] text-zinc-400">Disparo da geração ainda não integrado.</p>
+          </div>
+        ) : (
+          <p className="text-xs leading-relaxed text-amber-700 dark:text-amber-400">
+            {me.mwUser
+              ? `Sua credencial do MW desenv não está validada${me.mwValidationError ? ` (${me.mwValidationError})` : ""}.`
+              : "Você ainda não cadastrou sua credencial do MW desenv."}{" "}
+            <Link href="/settings/account" className="underline">
+              Configure em Minha conta
+            </Link>{" "}
+            para liberar a geração da versão com os seus dados.
+          </p>
+        )}
+      </Step>
+
+      {/* 6. fechar */}
+      <Step n={6} title="Resolver o card">
         <div className="flex flex-col gap-2">
           <textarea
             value={resolutionText}

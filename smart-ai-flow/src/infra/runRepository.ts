@@ -10,6 +10,8 @@ import type { Stage } from '../domain/stages';
  */
 export async function recordRun(input: {
   cardId: string;
+  /** Quem gastou — é o recorte do painel de consumo. Ausente em card sem dono. */
+  userId?: string | null;
   stage: Stage;
   ok: boolean;
   provider?: string;
@@ -26,6 +28,7 @@ export async function recordRun(input: {
     await prisma.run.create({
       data: {
         cardId: input.cardId,
+        userId: input.userId ?? null,
         stage: input.stage as unknown as PrismaStage,
         provider: input.provider ?? 'desconhecido',
         model,
@@ -50,10 +53,16 @@ export interface UsageSummary {
   byModel: { model: string; runs: number; costUsd: number }[];
 }
 
-/** Consumo agregado dos últimos N dias — alimenta o painel de custo. */
-export async function usageSummary(days = 30): Promise<UsageSummary> {
+/**
+ * Consumo agregado dos últimos N dias — alimenta o painel de custo.
+ * `userId` recorta pelo dev; `undefined` é a plataforma inteira, e só o admin
+ * chega nesse caso (a regra é `recorteDeDono`, a mesma do board).
+ */
+export async function usageSummary(days = 30, userId?: string): Promise<UsageSummary> {
   const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
-  const runs = await prisma.run.findMany({ where: { at: { gte: since } } });
+  const runs = await prisma.run.findMany({
+    where: { at: { gte: since }, ...(userId !== undefined ? { userId } : {}) },
+  });
 
   const byModel = new Map<string, { runs: number; costUsd: number }>();
   for (const r of runs) {

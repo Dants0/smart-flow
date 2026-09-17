@@ -91,6 +91,9 @@ export const UpdateMeSchema = z.object({
   bitbucketUser: z.string().optional(),
   bitbucketEmail: z.string().email('e-mail inválido').or(z.literal('')).optional(),
   bitbucketAppPassword: z.string().optional(),
+  // Credencial do MW desenv — conferida na tabela usr do MW20 ao salvar.
+  mwUser: z.string().optional(),
+  mwPassword: z.string().optional(),
 });
 
 export const UpdateSettingsSchema = z.object({
@@ -106,6 +109,13 @@ export const UpdateSettingsSchema = z.object({
   jiraBaseUrl: z.string().url().optional(),
   jiraAssignedJql: z.string().optional(),
   pbInsightUrl: z.string().url().optional(),
+  // Conexão ao banco MW20 (tabela usr). Senha vazia mantém a gravada.
+  mw20Engine: z.enum(['sqlserver', 'oracle']).or(z.literal('')).optional(),
+  mw20Host: z.string().optional(),
+  mw20Port: z.number().int().min(1).max(65535).nullable().optional(),
+  mw20Database: z.string().optional(),
+  mw20User: z.string().optional(),
+  mw20Password: z.string().optional(),
   // Texto livre — a skill é procedimento humano, não tem formato a validar. O
   // limite existe só pra proteger o prompt: ela entra em TODA análise e
   // proposta, então um texto gigante custa tokens em cada card e empurra o

@@ -116,8 +116,8 @@ export default function JiraSettingsPage() {
         label="URL base da instância"
         value={baseUrl}
         onChange={setBaseUrl}
-        placeholder="https://seu-jira.exemplo.com"
-        hint="Jira Server/Data Center. Esta versão é anterior a Personal Access Tokens, por isso Basic Auth."
+        placeholder="https://portalcliente.pixeon.com"
+        hint="Jira Server/Data Center. É também onde o login da plataforma é conferido — em branco, vale https://portalcliente.pixeon.com."
       />
 
       <div className="flex flex-col gap-2">

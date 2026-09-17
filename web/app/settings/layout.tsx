@@ -2,17 +2,18 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LuChevronLeft, LuKeyRound, LuServer, LuGauge, LuUser, LuUsers, LuLogOut } from "react-icons/lu";
+import { LuChevronLeft, LuDatabase, LuKeyRound, LuServer, LuGauge, LuUser, LuUsers, LuLogOut } from "react-icons/lu";
 import { SiJira } from "react-icons/si";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { AuthGuard } from "@/components/AuthGuard";
 import { clearToken } from "@/lib/auth";
 
 const NAV = [
-  { href: "/settings/account", label: "Minha conta", description: "Perfil e Jira pessoal", icon: LuUser },
+  { href: "/settings/account", label: "Minha conta", description: "Perfil, Jira e MW desenv", icon: LuUser },
   { href: "/settings/jira", label: "Jira", description: "Instância e busca", icon: SiJira, adminOnly: true },
   { href: "/settings/ai", label: "IA", description: "Provider do pipeline", icon: LuKeyRound, adminOnly: true },
   { href: "/settings/services", label: "Serviços", description: "URLs dos microserviços", icon: LuServer, adminOnly: true },
+  { href: "/settings/mw", label: "MW desenv", description: "Banco MW20 (tabela usr)", icon: LuDatabase, adminOnly: true },
   { href: "/settings/users", label: "Usuários", description: "Quem acessa a plataforma", icon: LuUsers, adminOnly: true },
   { href: "/settings/resources", label: "Monitor de Recursos", description: "Status, fila e custo", icon: LuGauge },
 ];

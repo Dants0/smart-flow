@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import { bitbucketApiIdentity } from '../domain/bitbucketIdentity';
 import { prisma } from './db';
 import { decryptSecret, encryptSecret, hashPassword, verifyPassword } from './crypto';
@@ -22,6 +23,12 @@ export interface AuthUser {
   bitbucketUser: string | null;
   bitbucketEmail: string | null;
   bitbucketAppPasswordSet: boolean;
+
+  /** Credencial do MW desenv. `mwValidatedAt` preenchido = bateu com a tabela usr. */
+  mwUser: string | null;
+  mwPasswordSet: boolean;
+  mwValidatedAt: string | null;
+  mwValidationError: string | null;
 }
 
 export type SetupStep = 'password' | 'jira';
@@ -47,6 +54,10 @@ function toAuthUser(row: {
   bitbucketUser?: string | null;
   bitbucketEmail?: string | null;
   bitbucketAppPasswordEnc?: string | null;
+  mwUser?: string | null;
+  mwPasswordEnc?: string | null;
+  mwValidatedAt?: Date | null;
+  mwValidationError?: string | null;
 }): AuthUser {
   // Sem credencial do Jira o banner de chamados atribuídos simplesmente nunca
   // aparece — e o usuário novo não tem como adivinhar o porquê. Por isso a
@@ -75,6 +86,10 @@ function toAuthUser(row: {
     bitbucketUser: row.bitbucketUser ?? null,
     bitbucketEmail: row.bitbucketEmail ?? null,
     bitbucketAppPasswordSet: !!row.bitbucketAppPasswordEnc,
+    mwUser: row.mwUser ?? null,
+    mwPasswordSet: !!row.mwPasswordEnc,
+    mwValidatedAt: row.mwValidatedAt?.toISOString() ?? null,
+    mwValidationError: row.mwValidationError ?? null,
   };
 }
 
@@ -96,6 +111,93 @@ export async function authenticate(username: string, password: string): Promise<
   const row = await prisma.user.findUnique({ where: { username } });
   if (!row || !verifyPassword(password, row.passwordHash)) return null;
   return toAuthUser(row);
+}
+
+/**
+ * Conta local que corresponde ao que foi digitado no login: pelo nome de usuário
+ * da plataforma OU pelo usuário do Jira já vinculado, sem diferenciar caixa.
+ */
+export async function findLoginCandidate(
+  typed: string,
+): Promise<{ id: string; username: string; jiraUser: string | null } | null> {
+  const nome = typed.trim();
+  return prisma.user.findFirst({
+    where: {
+      OR: [
+        { username: { equals: nome, mode: 'insensitive' } },
+        { jiraUser: { equals: nome, mode: 'insensitive' } },
+      ],
+    },
+    select: { id: true, username: true, jiraUser: true },
+    orderBy: { createdAt: 'asc' },
+  });
+}
+
+/**
+ * Grava quem acabou de autenticar no Jira: vincula a conta existente ou cria a
+ * conta na hora. A senha que o Jira aceitou vira a credencial usada pela
+ * esteira — então logar é também a forma de manter a senha em dia depois que
+ * ela expira no Jira, e de soltar o disjuntor de CAPTCHA.
+ *
+ * O primeiro usuário da plataforma vira admin: é o que substitui a tela de
+ * bootstrap, que pedia pra criar uma conta antes de qualquer coisa.
+ */
+export async function upsertJiraLogin(input: {
+  existingId?: string;
+  jiraName: string;
+  displayName: string;
+  password: string;
+  localUsername: string;
+}): Promise<AuthUser> {
+  const credencial = {
+    jiraUser: input.jiraName,
+    jiraPasswordEnc: encryptSecret(input.password),
+    jiraAuthBlockedAt: null,
+    jiraAuthBlockedReason: null,
+    mustChangePassword: false,
+  };
+
+  // Conta local com o mesmo nome e ainda sem Jira vinculado é a mesma pessoa
+  // (o nome de usuário do time é o do domínio) — vincula em vez de colidir.
+  let existingId = input.existingId;
+  if (!existingId) {
+    const homonimo = await prisma.user.findUnique({ where: { username: input.localUsername } });
+    if (homonimo?.jiraUser && homonimo.jiraUser.toLowerCase() !== input.jiraName.toLowerCase()) {
+      // Mesmo nome local, OUTRA conta do Jira: vincular entregaria a conta de
+      // uma pessoa a outra. Raro o bastante pra resolver na mão.
+      throw new Error(
+        `já existe na plataforma o usuário "${input.localUsername}" vinculado a outra conta do Jira — peça a um admin para renomear ou remover essa conta`,
+      );
+    }
+    existingId = homonimo?.id;
+  }
+
+  if (existingId) {
+    const row = await prisma.user.update({
+      where: { id: existingId },
+      data: { ...credencial, displayName: input.displayName },
+    });
+    return toAuthUser(row);
+  }
+
+  const isAdmin = (await prisma.user.count()) === 0;
+  const row = await prisma.user.create({
+    data: {
+      ...credencial,
+      username: input.localUsername,
+      displayName: input.displayName,
+      // Senha local inutilizável: a conta só entra pelo Jira (ver domain/jiraLogin).
+      passwordHash: hashPassword(randomBytes(32).toString('hex')),
+      isAdmin,
+    },
+  });
+  return toAuthUser(row);
+}
+
+/** true = a conta entra pelo Jira, e a senha local não vale (nem pode ser redefinida). */
+export async function isJiraLinked(username: string): Promise<boolean> {
+  const row = await prisma.user.findUnique({ where: { username }, select: { jiraUser: true } });
+  return !!row?.jiraUser;
 }
 
 /**
@@ -159,6 +261,8 @@ export async function updateUser(
     bitbucketUser?: string;
     bitbucketEmail?: string;
     bitbucketAppPassword?: string;
+    mwUser?: string;
+    mwPassword?: string;
   },
 ): Promise<AuthUser> {
   const data: Record<string, string | boolean | Date | null> = {};
@@ -186,7 +290,40 @@ export async function updateUser(
     data.bitbucketAppPasswordEnc = encryptSecret(patch.bitbucketAppPassword.trim());
   }
 
+  if (patch.mwUser !== undefined) data.mwUser = patch.mwUser.trim() || null;
+  // Senha do MW é texto aberto e comparada exata: não passa por trim, senão uma
+  // senha que termina em espaço nunca bateria.
+  if (patch.mwPassword) data.mwPasswordEnc = encryptSecret(patch.mwPassword);
+  // Credencial trocada volta a ser "não validada" até conferir de novo na usr.
+  if (patch.mwUser !== undefined || patch.mwPassword) {
+    data.mwValidatedAt = null;
+    data.mwValidationError = null;
+  }
+
   const row = await prisma.user.update({ where: { id }, data });
+  return toAuthUser(row);
+}
+
+/** Credencial do MW desenv em claro — só pra conferir na usr. Null = não cadastrada. */
+export async function getMwCredentials(
+  userId: string,
+): Promise<{ user: string; password: string } | null> {
+  const row = await prisma.user.findUnique({ where: { id: userId } });
+  if (!row?.mwUser || !row.mwPasswordEnc) return null;
+  return { user: row.mwUser, password: decryptSecret(row.mwPasswordEnc) };
+}
+
+/** Grava o resultado da conferência na usr: validada agora, ou recusada com o motivo. */
+export async function recordMwValidation(
+  userId: string,
+  result: { ok: true } | { ok: false; mensagem: string },
+): Promise<AuthUser> {
+  const row = await prisma.user.update({
+    where: { id: userId },
+    data: result.ok
+      ? { mwValidatedAt: new Date(), mwValidationError: null }
+      : { mwValidatedAt: null, mwValidationError: result.mensagem },
+  });
   return toAuthUser(row);
 }
 

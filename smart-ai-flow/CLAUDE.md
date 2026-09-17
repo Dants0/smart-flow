@@ -39,7 +39,9 @@ Duas paradas antecipadas, ambas deliberadas:
 - **A credencial de IA vive só no backend** (`infra/llm.ts`, vinda de
   Configurações → IA). A da Anthropic é chave de API **ou** token OAuth
   (`CLAUDE_CODE_OAUTH_TOKEN`, o que a conta corporativa emite) — headers
-  diferentes, o tipo é escolhido na tela. Todo consumo vira linha em `Run`.
+  diferentes, o tipo é escolhido na tela. Todo consumo vira linha em `Run`,
+  com o `userId` de quem gastou (dono do card na esteira, quem perguntou no
+  chat) — o painel de consumo é por usuário; só o admin vê o total.
   **Na prática, use chave de API**: medido em 2026-08-31, o token OAuth da conta
   Team autentica (a resposta traz `anthropic-organization-id`) mas a chamada a
   `/v1/messages` volta 429 sem header de cota nenhum e sem contabilizar consumo
@@ -119,6 +121,8 @@ src/
                  attachmentText.ts (trace em UTF-16, NUL que o Postgres recusa)
                  jqlStatuses.ts (o que a JQL esconde, pra legenda da tela)
                  ticketComments.ts (comentários do Jira no texto do chamado)
+                 jiraLogin.ts (login pela conta do Jira: rota, usuário, falha)
+                 mwDesenv.ts (credencial do MW desenv x tabela usr do MW20)
   agents/        contracts.ts (Zod + parser tolerante) · analyzer.ts
                  proposer.ts · jsonCall.ts (retentativa dirigida)
   orchestrator/  orchestrator.ts (roda os estágios de IA, audita em Run)
@@ -128,6 +132,7 @@ src/
                  pbInsight.ts · traceService.ts · jiraService.ts
                  repos.ts (os dois repositórios) · workspace.ts (aplica diff)
                  git.ts · bitbucket.ts · objectIndex.ts (arquivos que existem)
+                 mw20.ts (SELECT na usr do MW20 — SQL Server ou Oracle, só leitura)
                  monitor.ts · jobQueue.ts (espera agendada) · crypto.ts · costs.ts
                  *Repository.ts (Prisma)
   http/          routes.ts (Fastify) · schemas.ts (Zod)
@@ -135,7 +140,7 @@ src/
 modules/         briefing por sistema/módulo do cliente
   smartdesktop/  atende/ agenda/ mwsus/ cadgf/ pacdel/ cirurg/  smartweb/
 prisma/          User · Card · History · Run · Job · PlatformSettings
-tests/           vitest (225 testes)
+tests/           vitest (247 testes)
 ```
 
 ## Os dois repositórios do cliente
@@ -194,6 +199,16 @@ bem-vinda.
 - **Nada de segredo em texto**: senha do Jira e app password do Bitbucket vão
   cifradas (`infra/crypto.ts`); credencial em URL de git passa por
   `redactUrlCredentials` antes de virar log, histórico ou tela.
+- **Login é a conta do Jira** (`/auth/login` + `domain/jiraLogin.ts`): não há
+  cadastro; quem o Jira aceita ganha conta na hora (o primeiro vira admin) e a
+  senha do login vira a credencial da esteira. Conta vinculada ao Jira não aceita
+  senha local nem a recuperação pública de senha. URL padrão:
+  `https://portalcliente.pixeon.com` (`JIRA_BASE_URL` sobrescreve).
+- **MW desenv** (`domain/mwDesenv.ts`, `infra/mw20.ts`): credencial por dev,
+  conferida na `usr` do MW20 com a regra do próprio SMART (`usr_login`,
+  `usr_senha` em texto aberto, ativo = `usr_status` `'A'` ou nulo). Banco fora do
+  ar (`Mw20IndisponivelError`) **nunca** invalida a credencial — só recusa real
+  grava `mwValidationError`. A validação libera o passo 5 de VERSIONAMENTO.
 - **Falhar fechado**: negação de autenticação do Jira arma um disjuntor por
   usuário — insistir rearmaria o CAPTCHA na conta dele.
 - **Auditoria não derruba o pipeline**: `recordRun` engole a própria falha.

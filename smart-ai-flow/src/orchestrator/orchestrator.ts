@@ -43,6 +43,7 @@ export async function advance(
       const usage = err instanceof AgentOutputError ? err.usage : undefined;
       await recordRun({
         cardId: current.id,
+        userId: current.createdById,
         stage: stageBefore,
         ok: false,
         provider: usage?.provider,
@@ -74,9 +75,10 @@ export async function advance(
 }
 
 /** Grava o consumo do LLM na tabela Run — nunca deixa a falha de auditoria derrubar o pipeline. */
-async function logUsage(cardId: string, stage: Stage, usage: LlmResult): Promise<void> {
+async function logUsage(card: Card, stage: Stage, usage: LlmResult): Promise<void> {
   await recordRun({
-    cardId,
+    cardId: card.id,
+    userId: card.createdById,
     stage,
     ok: true,
     provider: usage.provider,
@@ -107,7 +109,7 @@ async function runStage(card: Card, traceProvider?: TraceProviderOverride): Prom
           : card;
 
       const { output: analysis, usage, grounded } = await runAnalysis(withTrace);
-      await logUsage(card.id, Stage.ANALISE, usage);
+      await logUsage(card, Stage.ANALISE, usage);
 
       const withAnalysis = { ...withTrace, analysis, grounded };
 
@@ -147,7 +149,7 @@ async function runStage(card: Card, traceProvider?: TraceProviderOverride): Prom
 
     case Stage.DESENVOLVIMENTO: {
       const { output: proposal, usage, unknownPaths } = await runProposal(card);
-      await logUsage(card.id, Stage.DESENVOLVIMENTO, usage);
+      await logUsage(card, Stage.DESENVOLVIMENTO, usage);
 
       // Caminho inventado não derruba o card: vira aviso na tela. Barrar aqui
       // jogaria fora uma análise que pode estar certa mesmo com o diff errado.

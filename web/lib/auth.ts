@@ -21,6 +21,12 @@ export interface AuthUser {
   bitbucketUser: string | null;
   bitbucketEmail: string | null;
   bitbucketAppPasswordSet: boolean;
+  /** Credencial do MW desenv. `mwValidatedAt` preenchido = bateu com a tabela usr do MW20. */
+  mwUser: string | null;
+  mwPasswordSet: boolean;
+  mwValidatedAt: string | null;
+  /** Por que a última conferência recusou (login inexistente, inativo, senha). */
+  mwValidationError: string | null;
 }
 
 const TOKEN_KEY = "smart-ai-flow:token";

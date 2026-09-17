@@ -64,6 +64,10 @@ solicitação, criado ao final do atendimento.
 | [2026-09-14-01](2026-09-14-01-board-pessoal-cards-vazavam-entre-usuarios.md) | O board era de todo mundo: cards vazavam entre usuários |
 | [2026-09-15-01](2026-09-15-01-backend-nao-alcancava-o-banco.md) | O backend não alcançava o banco: o container do Postgres ficou fora da rede |
 | [2026-09-16-01](2026-09-16-01-comentarios-do-chamado-e-analise-previa-do-n8n.md) | Comentários do chamado e a análise prévia do n8n como contexto |
+| [2026-09-16-02](2026-09-16-02-login-pela-conta-do-jira.md) | Login pela conta do Jira — sem cadastro na plataforma |
+| [2026-09-17-01](2026-09-17-01-custo-com-duas-casas-truncado.md) | Custo de tokens com duas casas, truncado |
+| [2026-09-17-02](2026-09-17-02-consumo-de-ia-por-usuario.md) | Consumo de IA por usuário no Monitor de Recursos |
+| [2026-09-17-03](2026-09-17-03-credencial-do-mw-desenv.md) | Credencial do MW desenv, validada na tabela usr do MW20 |
 
 ## Template
 

@@ -7,7 +7,6 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3333";
 const PUBLIC_PATHS = [
   "/auth/login",
   "/auth/status",
-  "/auth/bootstrap",
   "/auth/reset-password",
 ];
 
@@ -55,7 +54,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 // ---- Autenticação ---------------------------------------------------------
 
-export function authStatus(): Promise<{ needsBootstrap: boolean }> {
+/** Onde o login é conferido — o login da plataforma é a conta do Jira. */
+export function authStatus(): Promise<{ jiraBaseUrl: string }> {
   return request("/auth/status");
 }
 
@@ -76,14 +76,6 @@ export function resetPassword(
     method: "POST",
     body: JSON.stringify({ username, password }),
   });
-}
-
-export function bootstrapAdmin(input: {
-  username: string;
-  displayName: string;
-  password: string;
-}): Promise<AuthUser> {
-  return request("/auth/bootstrap", { method: "POST", body: JSON.stringify(input) });
 }
 
 export interface JiraConnectionTest {
@@ -122,6 +114,8 @@ export function updateMe(patch: {
   bitbucketAppPassword?: string;
   jiraUser?: string;
   jiraPassword?: string;
+  mwUser?: string;
+  mwPassword?: string;
 }): Promise<AuthUser> {
   return request("/me", { method: "PATCH", body: JSON.stringify(patch) });
 }
@@ -279,15 +273,23 @@ export interface PlatformSettingsView {
   openaiApiKeySet: boolean;
   openaiModel: string;
   traceServiceUrl: string;
-  jiraBaseUrl: string | null;
+  jiraBaseUrl: string;
   jiraAssignedJql: string;
   /** Consulta que o produto entrega de fábrica — habilita o "restaurar padrão". */
   jiraAssignedJqlDefault: string;
   pbInsightUrl: string;
   /** Skill do time colada em Configurações > IA. null = nenhuma configurada. */
   skills: string | null;
+  mw20Engine: Mw20Engine | null;
+  mw20Host: string | null;
+  mw20Port: number | null;
+  mw20Database: string | null;
+  mw20User: string | null;
+  mw20PasswordSet: boolean;
   updatedAt: string;
 }
+
+export type Mw20Engine = "sqlserver" | "oracle";
 
 export type PlatformSettingsPatch = Partial<{
   anthropicCredential: string;
@@ -301,7 +303,18 @@ export type PlatformSettingsPatch = Partial<{
   jiraAssignedJql: string;
   pbInsightUrl: string;
   skills: string;
+  mw20Engine: Mw20Engine | "";
+  mw20Host: string;
+  mw20Port: number | null;
+  mw20Database: string;
+  mw20User: string;
+  mw20Password: string;
 }>;
+
+/** Admin: a conexão gravada com o MW20 abre e lê a tabela usr? */
+export function testMw20Connection(): Promise<{ ok: true; latencyMs: number }> {
+  return request("/settings/mw20/test", { method: "POST" });
+}
 
 export function getSettings(): Promise<PlatformSettingsView> {
   return request("/settings");
@@ -334,7 +347,11 @@ export interface UsageSummary {
   outputTokens: number;
   costUsd: number;
   byModel: { model: string; runs: number; costUsd: number }[];
+  /** De quem é o número: só o de quem olha, ou a plataforma inteira (só admin). */
+  escopo: ConsumoEscopo;
 }
+
+export type ConsumoEscopo = "meu" | "plataforma";
 
 export interface MonitorSnapshot {
   resources: ResourceStatus[];
@@ -342,8 +359,9 @@ export interface MonitorSnapshot {
   usage: UsageSummary;
 }
 
-export function fetchMonitor(): Promise<MonitorSnapshot> {
-  return request("/monitor");
+/** `plataforma` só tem efeito para admin — o backend recorta o dev de qualquer jeito. */
+export function fetchMonitor(escopo: ConsumoEscopo = "meu"): Promise<MonitorSnapshot> {
+  return request(`/monitor${escopo === "plataforma" ? "?escopo=plataforma" : ""}`);
 }
 
 // ---- Versionamento (commit, push, PR, comentário no Jira) ------------------
@@ -397,6 +415,15 @@ export interface BitbucketAccess {
 
 export function testBitbucketConnection(): Promise<BitbucketAccess> {
   return request("/me/bitbucket/test", { method: "POST" });
+}
+
+/**
+ * Confere a credencial gravada do MW desenv na tabela usr do MW20. Recusa
+ * (login inexistente, inativo, senha) volta como erro 422 com a mensagem; o
+ * estado validado/não validado fica gravado — recarregue `getMe` depois.
+ */
+export function testMwCredential(): Promise<{ login: string; nome: string; user: AuthUser }> {
+  return request("/me/mw/test", { method: "POST" });
 }
 
 // ---- Chat de dúvidas sobre o card -----------------------------------------

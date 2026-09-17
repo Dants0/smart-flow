@@ -5,6 +5,7 @@ import { createCard, moveCard, type Card } from '../domain/card';
 import { podeVerCard, recorteDeDono, type Viewer } from '../domain/cardVisibility';
 import { Stage } from '../domain/stages';
 import { buildJiraComment } from '../domain/jiraComment';
+import { jiraUsernameFor, localUsernameFromJira, loginRoute } from '../domain/jiraLogin';
 import { answerCardQuestion } from '../agents/chat';
 import { appendChat, listChat } from '../infra/chatRepository';
 import { resolve, requestNewProposal, retryFromError } from '../orchestrator/orchestrator';
@@ -15,6 +16,7 @@ import {
   searchAssignedIssues,
   testJiraConnection,
   JiraAuthError,
+  verifyJiraLogin,
 } from '../infra/jiraService';
 import {
   findAllJiraKeys,
@@ -25,11 +27,17 @@ import {
   deleteCard as deleteCardRow,
   type CardFilters,
 } from '../infra/cardRepository';
-import { DEFAULT_ASSIGNED_JQL, getSettings, updateSettings } from '../infra/settingsRepository';
+import {
+  DEFAULT_ASSIGNED_JQL,
+  getSettings,
+  updateSettings,
+  type PlatformSettings,
+} from '../infra/settingsRepository';
 import { promoteResolvedTicket } from '../infra/pbInsight';
 import { checkResources } from '../infra/monitor';
 import { enqueueAdvance, queueStats } from '../infra/jobQueue';
 import { recordRun, usageSummary } from '../infra/runRepository';
+import { Mw20IndisponivelError, testarConexaoMw20, validarMwDoUsuario } from '../infra/mw20';
 import { applyDiff, revertDiff, WorkspaceError } from '../infra/workspace';
 import {
   branchForTicket,
@@ -50,7 +58,10 @@ import {
 import {
   authenticate,
   clearJiraAuthBlock,
-  countUsers,
+  findLoginCandidate,
+  isJiraLinked,
+  upsertJiraLogin,
+  type AuthUser,
   getBitbucketCredentials,
   getGitIdentity,
   createUser,
@@ -78,10 +89,37 @@ import {
 } from './schemas';
 
 /**
- * Rotas da esteira. Tudo autenticado por JWT, exceto /auth/login e /auth/bootstrap.
+ * Rotas da esteira. Tudo autenticado por JWT, exceto /auth/login, /auth/status e /auth/reset-password.
  * O pipeline de IA não roda mais dentro do request: POST /cards enfileira um Job
  * e responde na hora (ver infra/jobQueue.ts).
  */
+
+/** O que a tela de Configurações recebe: segredo nunca sai, só "está preenchido". */
+function settingsView(s: PlatformSettings) {
+  return {
+    anthropicCredentialSet: !!s.anthropicCredential,
+    anthropicAuthType: s.anthropicAuthType,
+    model: s.model,
+    aiProvider: s.aiProvider,
+    openaiApiKeySet: !!s.openaiApiKey,
+    openaiModel: s.openaiModel,
+    traceServiceUrl: s.traceServiceUrl,
+    jiraBaseUrl: s.jiraBaseUrl,
+    jiraAssignedJql: s.jiraAssignedJql,
+    // O padrão viaja junto: é o que dá à tela um "restaurar padrão" sem
+    // repetir a string no front, onde ela sairia de sincronia no primeiro ajuste.
+    jiraAssignedJqlDefault: DEFAULT_ASSIGNED_JQL,
+    pbInsightUrl: s.pbInsightUrl,
+    skills: s.skills,
+    mw20Engine: s.mw20.engine,
+    mw20Host: s.mw20.host,
+    mw20Port: s.mw20.port,
+    mw20Database: s.mw20.database,
+    mw20User: s.mw20.user,
+    mw20PasswordSet: !!s.mw20.password,
+    updatedAt: s.updatedAt,
+  };
+}
 
 /** Valida o corpo com Zod e responde 400 legível em vez de estourar 500. */
 function parseBody<T>(schema: z.ZodType<T>, req: FastifyRequest, reply: FastifyReply): T | null {
@@ -129,21 +167,15 @@ async function loadVisibleCard(req: FastifyRequest, reply: FastifyReply): Promis
 export async function routes(app: FastifyInstance) {
   // ---- Autenticação -----------------------------------------------------
 
-  /** Primeiro acesso: cria o admin inicial. Fecha assim que existir 1 usuário. */
-  app.post('/auth/bootstrap', async (req, reply) => {
-    if ((await countUsers()) > 0) {
-      return reply.code(409).send({ error: 'a plataforma já tem usuários — use o login.' });
-    }
-    const body = parseBody(CreateUserSchema, req, reply);
-    if (!body) return;
+  /*
+   * Não existe mais bootstrap nem cadastro: o login é pela conta do Jira, e o
+   * primeiro a entrar vira admin (ver `upsertJiraLogin`).
+   */
 
-    const user = await createUser({ ...body, isAdmin: true });
-    return reply.code(201).send(user);
-  });
-
-  /** Diz ao front se ainda precisa criar o primeiro usuário. Único endpoint público além do login. */
+  /** Diz ao front onde o login é conferido. Único endpoint público além do login. */
   app.get('/auth/status', async () => {
-    return { needsBootstrap: (await countUsers()) === 0 };
+    const { jiraBaseUrl } = await getSettings();
+    return { jiraBaseUrl };
   });
 
   /**
@@ -164,6 +196,14 @@ export async function routes(app: FastifyInstance) {
     const body = parseBody(ResetPasswordSchema, req, reply);
     if (!body) return;
 
+    // Conta que entra pelo Jira não tem senha local a redefinir — e deixar
+    // redefinir reabriria, pra essas contas, a porta sem autenticação descrita acima.
+    if (await isJiraLinked(body.username)) {
+      return reply.code(409).send({
+        error: 'esta conta entra com a senha do Jira — a recuperação é feita no próprio Jira',
+      });
+    }
+
     const user = await resetPasswordByUsername(body.username, body.password);
     if (!user) return reply.code(404).send({ error: 'usuário não encontrado' });
 
@@ -178,8 +218,36 @@ export async function routes(app: FastifyInstance) {
     const body = parseBody(LoginSchema, req, reply);
     if (!body) return;
 
-    const user = await authenticate(body.username, body.password);
-    if (!user) return reply.code(401).send({ error: 'usuário ou senha inválidos' });
+    const candidate = await findLoginCandidate(body.username);
+    let user: AuthUser | null = null;
+
+    // Conta antiga, nunca vinculada ao Jira: a senha local ainda vale e é
+    // conferida antes, sem gastar tentativa no Jira (ver domain/jiraLogin).
+    if (candidate && loginRoute(candidate) === 'local-depois-jira') {
+      user = await authenticate(candidate.username, body.password);
+    }
+
+    if (!user) {
+      const jira = await verifyJiraLogin(jiraUsernameFor(candidate, body.username), body.password);
+      if (!jira.ok) {
+        if (jira.failure !== 'UNAUTHORIZED') {
+          req.log.warn({ username: body.username, failure: jira.failure }, 'login pelo Jira falhou');
+        }
+        return reply.code(jira.failure === 'UNAVAILABLE' ? 503 : 401).send({ error: jira.message });
+      }
+
+      try {
+        user = await upsertJiraLogin({
+          existingId: candidate?.id,
+          jiraName: jira.name,
+          displayName: jira.displayName,
+          password: body.password,
+          localUsername: localUsernameFromJira(jira.name),
+        });
+      } catch (err) {
+        return reply.code(409).send({ error: err instanceof Error ? err.message : String(err) });
+      }
+    }
 
     const token = app.jwt.sign({ sub: user.id, username: user.username }, { expiresIn: '12h' });
     return { token, user };
@@ -206,7 +274,46 @@ export async function routes(app: FastifyInstance) {
     secured.patch('/me', async (req, reply) => {
       const body = parseBody(UpdateMeSchema, req, reply);
       if (!body) return;
-      return updateUser(currentUserId(req), body);
+      const userId = currentUserId(req);
+
+      // A tela manda o usuário do MW em todo salvar. Só conta como troca se o
+      // valor mudou — senão salvar o Bitbucket derrubaria a validação do MW.
+      const antes = await findUserById(userId);
+      const patch = { ...body };
+      if (patch.mwUser !== undefined && patch.mwUser.trim() === (antes?.mwUser ?? '')) {
+        delete patch.mwUser;
+      }
+      const updated = await updateUser(userId, patch);
+
+      // Credencial do MW desenv trocada: confere na usr já, sem esperar o dev
+      // lembrar de clicar em testar. Banco fora do ar não impede salvar — a
+      // credencial só fica "não validada" e o teste explícito diz o porquê.
+      const mwMudou = patch.mwUser !== undefined || !!patch.mwPassword;
+      if (mwMudou && updated.mwUser && updated.mwPasswordSet) {
+        try {
+          return (await validarMwDoUsuario(userId)).user;
+        } catch (err) {
+          if (!(err instanceof Mw20IndisponivelError)) throw err;
+          req.log.warn({ userId, err: err.message }, 'MW20 indisponível ao validar credencial');
+        }
+      }
+      return updated;
+    });
+
+    /** Confere a credencial gravada do MW desenv na tabela usr do MW20. */
+    secured.post('/me/mw/test', async (req, reply) => {
+      try {
+        const { veredito, user } = await validarMwDoUsuario(currentUserId(req));
+        if (!veredito.ok) {
+          return reply.code(422).send({ code: `MW_${veredito.motivo}`, error: veredito.mensagem, user });
+        }
+        return { login: veredito.login, nome: veredito.nome, user };
+      } catch (err) {
+        if (err instanceof Mw20IndisponivelError) {
+          return reply.code(502).send({ code: 'MW20_UNAVAILABLE', error: err.message });
+        }
+        throw err;
+      }
     });
 
     secured.get('/users', async (req, reply) => {
@@ -517,6 +624,8 @@ export async function routes(app: FastifyInstance) {
         // O chat gasta token como qualquer outro estágio — entra na auditoria.
         await recordRun({
           cardId: id,
+          // quem perguntou paga — pode ser o admin olhando o card de outro dev
+          userId: currentUserId(req),
           stage: card.stage,
           ok: true,
           provider: usage.provider,
@@ -528,7 +637,13 @@ export async function routes(app: FastifyInstance) {
         return listChat(id);
       } catch (err) {
         const message = err instanceof Error ? err.message : 'falha ao responder';
-        await recordRun({ cardId: id, stage: card.stage, ok: false, errorMessage: message });
+        await recordRun({
+          cardId: id,
+          userId: currentUserId(req),
+          stage: card.stage,
+          ok: false,
+          errorMessage: message,
+        });
         return reply.code(502).send({ error: message });
       }
     });
@@ -912,24 +1027,7 @@ export async function routes(app: FastifyInstance) {
     // ---- Configurações / observabilidade --------------------------------
 
     secured.get('/settings', async () => {
-      const s = await getSettings();
-      return {
-        anthropicCredentialSet: !!s.anthropicCredential,
-        anthropicAuthType: s.anthropicAuthType,
-        model: s.model,
-        aiProvider: s.aiProvider,
-        openaiApiKeySet: !!s.openaiApiKey,
-        openaiModel: s.openaiModel,
-        traceServiceUrl: s.traceServiceUrl,
-        jiraBaseUrl: s.jiraBaseUrl,
-        jiraAssignedJql: s.jiraAssignedJql,
-        // O padrão viaja junto: é o que dá à tela um "restaurar padrão" sem
-        // repetir a string no front, onde ela sairia de sincronia no primeiro ajuste.
-        jiraAssignedJqlDefault: DEFAULT_ASSIGNED_JQL,
-        pbInsightUrl: s.pbInsightUrl,
-        skills: s.skills,
-        updatedAt: s.updatedAt,
-      };
+      return settingsView(await getSettings());
     });
 
     secured.patch('/settings', async (req, reply) => {
@@ -939,32 +1037,38 @@ export async function routes(app: FastifyInstance) {
       const body = parseBody(UpdateSettingsSchema, req, reply);
       if (!body) return;
 
-      const updated = await updateSettings(body);
-      return {
-        anthropicCredentialSet: !!updated.anthropicCredential,
-        anthropicAuthType: updated.anthropicAuthType,
-        model: updated.model,
-        aiProvider: updated.aiProvider,
-        openaiApiKeySet: !!updated.openaiApiKey,
-        openaiModel: updated.openaiModel,
-        traceServiceUrl: updated.traceServiceUrl,
-        jiraBaseUrl: updated.jiraBaseUrl,
-        jiraAssignedJql: updated.jiraAssignedJql,
-        jiraAssignedJqlDefault: DEFAULT_ASSIGNED_JQL,
-        pbInsightUrl: updated.pbInsightUrl,
-        skills: updated.skills,
-        updatedAt: updated.updatedAt,
-      };
+      return settingsView(await updateSettings(body));
     });
 
+    /** Admin: a conexão gravada com o MW20 abre e lê a tabela usr? */
+    secured.post('/settings/mw20/test', async (req, reply) => {
+      const me = await findUserById(currentUserId(req));
+      if (!me?.isAdmin) return reply.code(403).send({ error: 'só admin' });
+      try {
+        return await testarConexaoMw20();
+      } catch (err) {
+        if (err instanceof Mw20IndisponivelError) {
+          return reply.code(502).send({ code: 'MW20_UNAVAILABLE', error: err.message });
+        }
+        throw err;
+      }
+    });
+
+    /**
+     * O consumo é de quem olha: o dev vê só o que ele gastou. O admin também
+     * começa pelo dele e pede `?escopo=plataforma` para ver o total — mesma
+     * régua do board (`recorteDeDono`), onde a esteira inteira é do admin.
+     */
     secured.get('/monitor', async (req) => {
+      const escopo = (req.query as { escopo?: string }).escopo;
+      const recorte = recorteDeDono(await viewerOf(req), escopo !== 'plataforma');
       const [resources, queue, usage] = await Promise.all([
         // o recurso do Bitbucket depende de QUEM olha: a credencial é por dev
         checkResources(currentUserId(req)),
         queueStats(),
-        usageSummary(30),
+        usageSummary(30, recorte),
       ]);
-      return { resources, queue, usage };
+      return { resources, queue, usage: { ...usage, escopo: recorte ? 'meu' : 'plataforma' } };
     });
   });
 }

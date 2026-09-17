@@ -61,9 +61,21 @@ model User {
   bitbucketEmail          String?
   bitbucketAppPasswordEnc String?
 
+  // Credencial do MW desenv, por usuário. É o login da tabela `usr` do banco
+  // MW20 — conferido lá (login + senha + ativo) antes de liberar a geração de
+  // versão em VERSIONAMENTO. Cifrada pelo mesmo motivo das outras: um dia ela vai
+  // ser enviada a outro sistema, então precisa ser reversível.
+  mwUser            String?
+  mwPasswordEnc     String?
+  // Quando a credencial bateu com a `usr` pela última vez. null = não validada.
+  mwValidatedAt     DateTime?
+  // Por que a última validação recusou (usuário inexistente, senha, inativo).
+  mwValidationError String?
+
   cards           Card[]
   history         History[]
   chatMessages    ChatMessage[]
+  runs            Run[]
 
   createdAt DateTime @default(now())
 }
@@ -216,6 +228,15 @@ model PlatformSettings {
   // imposto — null = nenhuma skill, e a esteira roda como antes.
   skills String?
 
+  // Conexão ao banco MW20, onde mora a tabela `usr` usada para validar a
+  // credencial do MW desenv de cada dev. Só leitura. A senha vai cifrada.
+  mw20Engine      String? // 'sqlserver' | 'oracle'
+  mw20Host        String?
+  mw20Port        Int?
+  mw20Database    String? // nome do banco (SQL Server) ou service name (Oracle)
+  mw20User        String?
+  mw20PasswordEnc String?
+
   updatedAt DateTime @updatedAt
 }
 
@@ -252,5 +273,12 @@ model Run {
   errorMessage String?
   at           DateTime @default(now())
 
+  // Quem gastou: o dono do card nos estágios da esteira, quem perguntou no chat.
+  // É o recorte do painel de consumo — sem isso cada dev via o gasto da plataforma
+  // inteira como se fosse dele.
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+  userId String?
+
   @@index([at])
+  @@index([userId, at])
 }

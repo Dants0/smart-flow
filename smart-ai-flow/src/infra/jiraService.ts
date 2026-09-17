@@ -2,6 +2,7 @@ import type { CardImage, CardTraceFile } from '../domain/card';
 import { decodeAttachmentText } from '../domain/attachmentText';
 import { parseExcludedStatuses } from '../domain/jqlStatuses';
 import { formatTicketComments, type JiraCommentRaw } from '../domain/ticketComments';
+import { classifyJiraLogin, type JiraLoginFailure } from '../domain/jiraLogin';
 import { getSettings } from './settingsRepository';
 import {
   blockJiraAuth,
@@ -235,6 +236,68 @@ export async function fetchJiraIssue(userId: string, key: string): Promise<JiraI
   }
 
   return { rawTicket, images, traceFiles };
+}
+
+export type JiraLoginResult =
+  | { ok: true; name: string; displayName: string }
+  | { ok: false; failure: JiraLoginFailure; message: string };
+
+/**
+ * Confere usuário e senha direto no Jira — é o login da plataforma.
+ *
+ * Não passa por `jiraFetch` de propósito: aquele arma o disjuntor POR USUÁRIO
+ * da plataforma, e aqui a pessoa pode nem ter conta ainda. Também não repete a
+ * chamada: cada senha errada conta como login falhado no Jira e aproxima o
+ * CAPTCHA.
+ */
+export async function verifyJiraLogin(username: string, password: string): Promise<JiraLoginResult> {
+  const { jiraBaseUrl } = await getSettings();
+
+  let resp: Response;
+  try {
+    resp = await fetch(`${jiraBaseUrl}/rest/api/2/myself`, {
+      headers: {
+        Authorization: authHeader({ user: username, password }),
+        Accept: 'application/json',
+      },
+      signal: AbortSignal.timeout(15000),
+    });
+  } catch (err) {
+    const motivo = err instanceof Error ? err.message : String(err);
+    return {
+      ok: false,
+      failure: 'UNAVAILABLE',
+      message: `não foi possível falar com o Jira em ${jiraBaseUrl} (${motivo}) — tente de novo em instantes`,
+    };
+  }
+
+  const failure = classifyJiraLogin(resp.status, resp.headers.get('x-authentication-denied-reason'));
+  if (failure === 'CAPTCHA') {
+    return {
+      ok: false,
+      failure,
+      message: `O Jira pediu CAPTCHA para esta conta. Entre uma vez em ${jiraBaseUrl} pelo navegador, resolvendo o CAPTCHA, e volte aqui.`,
+    };
+  }
+  if (failure === 'UNAUTHORIZED') {
+    return {
+      ok: false,
+      failure,
+      message:
+        'usuário ou senha do Jira inválidos. Cuidado ao insistir: depois de algumas tentativas erradas o Jira passa a exigir CAPTCHA.',
+    };
+  }
+  if (failure === 'UNAVAILABLE') {
+    return {
+      ok: false,
+      failure,
+      message: `o Jira respondeu HTTP ${resp.status} em ${jiraBaseUrl} — confira a URL base em Configurações > Jira ou tente mais tarde`,
+    };
+  }
+
+  const me = (await resp.json()) as { name?: string; displayName?: string };
+  const name = me.name?.trim() || username;
+  return { ok: true, name, displayName: me.displayName?.trim() || name };
 }
 
 export interface AssignedIssue {
